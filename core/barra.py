@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from core.carga_puntual import CargaPuntual
 from core.nodos import Nodo
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from math import radians, cos, sin, pi
 
 @dataclass
@@ -42,216 +42,260 @@ class Barra:
     
     k_global_dat : Optional[np.ndarray] = None  # Matriz de rigidez global (12x12)
     
-    def p_eje(self):
-        alpha = np.radians(self.tita or 0.0)
-        A = self.matriz_A(alpha)
-        A = self.bloque_diagonal_4x3(A)
-        print("Matriz A extendida:\n", A)
-        self.reaccion_de_empotramiento_rotado_eje = A @ self.reaccion_de_empotramiento_local_total
-        print(self.reaccion_de_empotramiento_rotado_eje)
-        return self.reaccion_de_empotramiento_rotado_eje
-
-    def p_global(self):
-        XD = self.p_eje()
-        sm = self.calcular_submatriz_de_rotacion()
-        T = self.bloque_diagonal_4x3(sm)
-        self.reaccion_de_empotramiento_global = T.T @ self.reaccion_de_empotramiento_rotado_eje
-        #print()
-        #print("ID de la barra:", self.id)
-        print("Reacción de empotramiento rotado en global:", self.reaccion_de_empotramiento_global)
-        #print()
-        self.reaccion_nudo_i_equivalente_global = -(self.reaccion_de_empotramiento_global[:6])
-        #print(f"Reacción de nudo {self.nodo_i} rotado en global:", self.reaccion_nudo_i_equivalente_global)
-        self.reaccion_nudo_f_equivalente_global = -(self.reaccion_de_empotramiento_global[6:])
-        #print(f"Reacción de nudo {self.nodo_f} rotado en global:", self.reaccion_nudo_f_equivalente_global)
-        return self.reaccion_de_empotramiento_global, self.reaccion_nudo_i_equivalente_global, self.reaccion_nudo_f_equivalente_global
-    
-    def actualizar_reacciones_global(self):
-        self.p_global()
-
-    def añadirCarga(self, carga): #ESTO LO AGREGUE YO
-        """
-        Añade una carga a la barra (y suma sus reacciones equivalentes).
-        Este método asegura el ACUMULADO.
-        """
-        f_empotramiento = carga.reacciones_de_empotramiento(self)
-        self.cargas = np.append(self.cargas, carga)
-        # NO hace falta volver a sumar, ya se sumó dentro de la función
-        return f_empotramiento
-    
-    def calcular_longitud_y_bases(self, debug=0):
-        coord_i = self.nodo_i_obj.get_coord()
-        coord_f = self.nodo_f_obj.get_coord()
-        atol = 1e-3
-
-        print(f"\n--- [Barra {self.id}] Calculo de bases ---")
-        print(f"Nodo i: {coord_i}, Nodo f: {coord_f}")
-
-        # 1. Xlocal: SIEMPRE del menor al mayor
-        x_local = coord_f - coord_i
-        self.L = np.linalg.norm(x_local)
-        self.x_local = x_local / self.L
-        print(f"[Barra {self.id}] Xlocal: {self.x_local}, L = {self.L:.4f}")
-
-        # 2. "Up": SIEMPRE vertical global (+Y)
-        up = np.array([0, 1, 0])
-        if np.abs(np.dot(self.x_local, up)) > 1 - atol:
-            up = np.array([0, 0, 1])
-            print(f"[Barra {self.id}] Caso especial: barra ~ vertical, up cambiado a {up}")
-            y_local = np.cross(up, self.x_local)
-            self.y_local = y_local / np.linalg.norm(y_local)
-            print(f"[Barra {self.id}] y_local corregido: {self.y_local}")
-            print(f"[Barra {self.id}] x_local: {self.x_local}")
-            z_local = np.cross(self.x_local, self.y_local)
-            self.z_local = z_local / np.linalg.norm(z_local)
-            print(f"[Barra {self.id}] z_local corregido: {self.z_local}")
-
-        else:
-            z_local = np.cross(self.x_local, up)
-            z_local = z_local / np.linalg.norm(z_local)
-            self.z_local = z_local
-            self.y_local = np.cross(self.z_local, self.x_local)
-            self.y_local = self.y_local / np.linalg.norm(self.y_local)
-
-        print(f"[Barra {self.id}] Ylocal: {self.y_local}")
-        print(f"[Barra {self.id}] Zlocal: {self.z_local}")
-
-        # 5. Rotación antihoraria respecto del eje Xlocal (tita en grados)
-        theta = np.radians(self.tita or 0.0)
-        print(f"[Barra {self.id}] θ (rads): {theta}")
-        if abs(theta) > 1e-8:
-            print(f"[Barra {self.id}] y_local antes de rotar: {self.y_local}")
-            print(f"[Barra {self.id}] z_local antes de rotar: {self.z_local}")
-            base_yz = np.column_stack((self.y_local, self.z_local))
-            print(f"[Barra {self.id}] Base YZ antes de rotar:\n{base_yz}")
-            rot_2d = np.array([
-                [np.cos(theta), -np.sin(theta)],
-                [np.sin(theta),  np.cos(theta)]
-            ])
-            print(f"[Barra {self.id}] Matriz de rotación 2D:\n{rot_2d}")
-            yz_rotados = base_yz @ rot_2d
-            print(f"[Barra {self.id}] Base YZ rotada:\n{yz_rotados}")
-            self.y_local = yz_rotados[:, 0]
-            self.z_local = yz_rotados[:, 1]
-            print(f"[Barra {self.id}] Ylocal rotado: {self.y_local}")
-            print(f"[Barra {self.id}] Zlocal rotado: {self.z_local}")
-
-        if debug:
-            self.debug_bases()
-
-    def debug_bases(self):
-        print("x_local:", self.x_local)
-        print("y_local:", self.y_local)
-        print("z_local:", self.z_local)
-        print("Normas:", np.linalg.norm(self.x_local), np.linalg.norm(self.y_local), np.linalg.norm(self.z_local))
-        print("Ortogonalidad x·y:", np.dot(self.x_local, self.y_local))
-        print("Ortogonalidad x·z:", np.dot(self.x_local, self.z_local))
-        print("Ortogonalidad y·z:", np.dot(self.y_local, self.z_local))
-        print("Determinante base (debe ser +1):", np.linalg.det(np.column_stack([self.x_local, self.y_local, self.z_local])))
-
-    def Kloc(self):
-        # Asegura que la longitud y las bases están listas
-        self.calcular_longitud_y_bases()
-        L = self.L
-        # Calcula los parámetros de la sección transversal usando los datos del objeto y propiedades del material
-        E = self.E
-        A = self.A
-        I_y = self.I_y
-        I_z = self.I_z
-        G = self.G
-        J = self.J
-
-        # Matriz de rigidez para 3D (12x12)
-        Kloc = np.zeros((12, 12)) 
-
-        Kloc[0, 0] = E * A / L  # Rigidez axial 
-        Kloc[1, 1] = 12 * E * I_z / L**3  # Rigidez de flexión en Z
-        Kloc[2, 2] = 12 * E * I_y / L**3  # Rigidez de flexión en Y
-        Kloc[3, 3] = G * J / L  # Rigidez torsional
-        Kloc[4, 4] = 4 * E * I_y / L  
-        Kloc[5, 5] = 4 * E * I_z / L  
-        Kloc[6, 6] = E * A / L  # Rigidez axial 
-        Kloc[7, 7] = 12 * E * I_z / L**3  # Rigidez de flexión en Z
-        Kloc[8, 8] = 12 * E * I_y / L**3  # Rigidez de flexión en Y
-        Kloc[9, 9] = G * J / L  # Rigidez torsional
-        Kloc[10, 10] = 4 * E * I_y / L 
-        Kloc[11, 11] = 4 * E * I_z / L 
-
-        Kloc[4, 2] = Kloc[2, 4] = -6 * E * I_y / L**2
-        Kloc[1, 5] = Kloc[5, 1] = 6 * E * I_z / L**2 
-        Kloc[6, 0] = Kloc[0, 6] = - E * A / L 
-        Kloc[7, 1] = Kloc[1, 7] = - 12 * E * I_z / L**3  
-        Kloc[7, 5] = Kloc[5, 7] = - 6 * E * I_z / L**2  
-        Kloc[8, 2] = Kloc[2, 8] = - 12 * E * I_y / L**3 
-        Kloc[8, 4] = Kloc[4, 8] = 6 * E * I_y / L**2 
-        Kloc[9, 3] = Kloc[3, 9] = - G * J / L
-        Kloc[10, 2] = Kloc[2, 10] = -6 * E * I_y / L**2
-        Kloc[10, 4] = Kloc[4, 10] = 2 * E * I_y / L
-        Kloc[10, 8] = Kloc[8, 10] = 6 * E * I_y / L**2
-        Kloc[11, 1] = Kloc[1, 11] = 6 * E * I_z / L**2  
-        Kloc[11, 5] = Kloc[5, 11] = 2 * E * I_z / L
-        Kloc[11, 7] = Kloc[7, 11] = -6 * E * I_z / L**2  
+    def obtener_vector_unitario(self) -> Optional[np.ndarray]:
+            """
+            Calcula el vector unitario de la barra desde el nodo inicial al nodo final.
+            Retorna None si los nodos no están disponibles.
+            """
+            if self.nodo_i_obj is None or self.nodo_f_obj is None:
+                return None
+            
+            # Vector desde nodo inicial a nodo final
+            dx = self.nodo_f_obj.x - self.nodo_i_obj.x
+            dy = self.nodo_f_obj.y - self.nodo_i_obj.y
+            dz = self.nodo_f_obj.z - self.nodo_i_obj.z
+            
+            # Calcular longitud si no está calculada
+            if self.L is None or self.L == 0:
+                self.L = np.sqrt(dx**2 + dy**2 + dz**2)
+            
+            if self.L == 0:
+                return None
+            
+            # Vector unitario
+            v_unitario = np.array([dx / self.L, dy / self.L, dz / self.L])
+            return v_unitario
         
-        return Kloc
-
-    def bloque_diagonal_4x3(self, M):
-        res = np.zeros((12, 12))
-        for i in range(4):
-            res[i*3:(i+1)*3, i*3:(i+1)*3] = M
-        return res
-
-    def calcular_submatriz_de_rotacion(self):
-
-        self.calcular_longitud_y_bases()
-        if (self.x_local == np.array([0,0,1])).all():
-                T = np.array([
-                    [0, 0, 1],
-                    [0, 1 , 0],
-                    [-1, 0, 0]
-                ])
-                return T
-        if (self.x_local == np.array([0,0,-1])).all():
-                T = np.array([
-                    [0, 0, -1],
-                    [0, 1 , 0],
-                    [1, 0, 0]
-                ])
-                return T
-        l = self.x_local[0]
-        m = self.x_local[1]
-        n = self.x_local[2]
-        d = (l**2+m**2)**0.5
-        cxx = l
-        cyx = m
-        czx = n
-        cxy = -m/d
-        cyy = l/d
-        czy = 0
-        cxz = -l*n/d
-        cyz = -m*n/d
-        czz = d
-        T = np.array([
-            [cxx, cyx, czx],
-            [cxy, cyy ,  czy],
-            [cxz, cyz,  czz]
+    def calcular_alpha(self) -> Optional[float]:
+        """
+        Calcula el ángulo alpha (rotación alrededor del eje X) en grados.
+        alpha = arctan(y/z) donde y y z son las componentes del vector unitario.
+        """
+        v_unit = self.obtener_vector_unitario()
+        if v_unit is None:
+            return None
+        
+        y = v_unit[1]  # Componente Y del vector unitario
+        z = v_unit[2]  # Componente Z del vector unitario
+        
+        # Usar arctan2 para manejar correctamente todos los cuadrantes
+        # alpha = arctan(y/z)
+        if abs(z) < 1e-10:  # Evitar división por cero
+            alpha = np.pi / 2 if y > 0 else -np.pi / 2
+        else:
+            alpha = np.arctan2(y, z)
+        
+        return np.rad2deg(alpha)
+    
+    def calcular_beta(self) -> Optional[float]:
+        """
+        Calcula el ángulo beta (rotación alrededor del eje Y) en grados.
+        beta = arctan(z/x) donde z y x son las componentes del vector unitario.
+        """
+        v_unit = self.obtener_vector_unitario()
+        if v_unit is None:
+            return None
+        
+        z = v_unit[2]  # Componente Z del vector unitario
+        x = v_unit[0]  # Componente X del vector unitario
+        
+        # Usar arctan2 para manejar correctamente todos los cuadrantes
+        # beta = arctan(z/x)
+        if abs(x) < 1e-10:  # Evitar división por cero
+            beta = np.pi / 2 if z > 0 else -np.pi / 2
+        else:
+            beta = np.arctan2(z, x)
+        
+        return np.rad2deg(beta)
+    
+    def calcular_gamma(self) -> Optional[float]:
+        """
+        Calcula el ángulo gamma (rotación alrededor del eje Z) en grados.
+        gamma = arctan(y/x) donde y y x son las componentes del vector unitario.
+        """
+        v_unit = self.obtener_vector_unitario()
+        if v_unit is None:
+            return None
+        
+        y = v_unit[1]  # Componente Y del vector unitario
+        x = v_unit[0]  # Componente X del vector unitario
+        
+        # Usar arctan2 para manejar correctamente todos los cuadrantes
+        # gamma = arctan(y/x)
+        if abs(x) < 1e-10:  # Evitar división por cero
+            gamma = np.pi / 2 if y > 0 else -np.pi / 2
+        else:
+            gamma = np.arctan2(y, x)
+        
+        return np.rad2deg(gamma)
+    
+    def calcular_rotacion_eje_z(self, gamma_deg: float) -> np.ndarray:
+        """
+        Calcula la matriz de rotación en torno al eje z, usando el ángulo gamma en grados.
+        """
+        gamma = np.deg2rad(gamma_deg)
+        Rz = np.array([
+            [np.cos(gamma), -np.sin(gamma), 0],
+            [np.sin(gamma),  np.cos(gamma), 0],
+            [0,              0,             1]
         ])
-        print("T =", T)
-        return T
+        return Rz
 
-    def Kglobal(self):
-        alpha = np.radians(self.tita or 0.0)
-        A = self.matriz_A(alpha)
-        A = self.bloque_diagonal_4x3(A)
-        k_global_rotado_eje = A @ self.Kloc() @ A.T
-        sm = self.calcular_submatriz_de_rotacion()
-        T = self.bloque_diagonal_4x3(sm)
-        k_global_transformado = (T.T @ k_global_rotado_eje) @ T
+    def calcular_rotacion_eje_y(self, beta_deg: float) -> np.ndarray:
+        """
+        Calcula la matriz de rotación en torno al eje y, usando el ángulo beta en grados.
+        """
+        beta = np.deg2rad(beta_deg)
+        Ry = np.array([
+            [ np.cos(beta), 0, np.sin(beta)],
+            [ 0,            1, 0           ],
+            [-np.sin(beta), 0, np.cos(beta)]
+        ])
+        return Ry
 
-        return k_global_transformado
+    def calcular_rotacion_eje_x(self, alpha_deg: float) -> np.ndarray:
+        """
+        Calcula la matriz de rotación en torno al eje x, usando el ángulo alpha en grados.
+        """
+        alpha = np.deg2rad(alpha_deg)
+        Rx = np.array([
+            [1, 0,              0           ],
+            [0, np.cos(alpha), -np.sin(alpha)],
+            [0, np.sin(alpha),  np.cos(alpha)]
+        ])
+        return Rx
 
-    def matriz_A(self, alpha): 
-        return np.array(
-            [[1, 0, 0], 
-            [0, np.cos(alpha), -np.sin(alpha)], 
-            [0, np.sin(alpha), np.cos(alpha)] 
-            ])
+    def matriz_rotacion_general(self) -> np.ndarray:
+        """
+        Calcula la matriz de rotación general utilizando ángulos (en grados) alfa (X), beta (Y) y gamma (Z).
+        El resultado es Rz * Ry * Rx (el orden clásico de Euler-ZYX).
+        """
+        alpha = self.calcular_alpha()
+        beta = self.calcular_beta()
+        gamma = self.calcular_gamma()
+        
+        if alpha is None or beta is None or gamma is None:
+            return np.eye(3)
+        
+        Rx = self.calcular_rotacion_eje_x(alpha)
+        Ry = self.calcular_rotacion_eje_y(beta)
+        Rz = self.calcular_rotacion_eje_z(gamma)
+        R = Rz @ Ry @ Rx
+        return R
+    
+    def calcular_terna_ejes_locales(self) -> bool:
+        """
+        Calcula la terna de ejes locales (x_local, y_local, z_local) trabajando siempre con vectores unitarios.
+        
+        x_local: Vector unitario desde nodo inicial a nodo final
+        y_local: Vector unitario perpendicular a x_local y al vector "up" (eje Z global)
+        z_local: Vector unitario perpendicular a x_local y y_local (completa la terna ortonormal)
+        
+        Retorna True si se calcularon correctamente, False en caso contrario.
+        """
+        if self.nodo_i_obj is None or self.nodo_f_obj is None:
+            return False
+        
+        # Precisión numérica
+        dtype = np.float64
+        tol = 1e-12
+        
+        # 1. Calcular x_local: vector unitario desde nodo inicial a nodo final
+        dx = self.nodo_f_obj.x - self.nodo_i_obj.x
+        dy = self.nodo_f_obj.y - self.nodo_i_obj.y
+        dz = self.nodo_f_obj.z - self.nodo_i_obj.z
+        
+        # Calcular longitud
+        self.L = np.sqrt(dx*dx + dy*dy + dz*dz)
+        if self.L < tol:
+            return False
+        
+        # Vector unitario x_local
+        self.x_local = np.array([dx / self.L, dy / self.L, dz / self.L], dtype=dtype)
+        
+        # 2. Vector de referencia "up" (eje Z global)
+        up = np.array([0.0, 0.0, 1.0], dtype=dtype)
+        
+        # 3. Calcular y_local = normalize(cross(up, x_local))
+        y_temp = np.cross(up, self.x_local)
+        norma_y = np.linalg.norm(y_temp)
+        
+        # Caso especial: si x_local es paralelo a up (barra vertical)
+        if norma_y < tol:
+            # Usar eje Y global como referencia alternativa
+            up = np.array([0.0, 1.0, 0.0], dtype=dtype)
+            y_temp = np.cross(up, self.x_local)
+            norma_y = np.linalg.norm(y_temp)
+            
+            # Si aún es paralelo, usar eje X global
+            if norma_y < tol:
+                up = np.array([1.0, 0.0, 0.0], dtype=dtype)
+                y_temp = np.cross(up, self.x_local)
+                norma_y = np.linalg.norm(y_temp)
+        
+        if norma_y < tol:
+            return False
+        
+        # Normalizar y_local
+        self.y_local = y_temp / norma_y
+        
+        # 4. Calcular z_local = normalize(cross(x_local, y_local))
+        z_temp = np.cross(self.x_local, self.y_local)
+        norma_z = np.linalg.norm(z_temp)
+        
+        if norma_z < tol:
+            return False
+        
+        # Normalizar z_local
+        self.z_local = z_temp / norma_z
+        
+        # 5. Aplicar rotación tita si existe y es significativa (rotación alrededor del eje x_local)
+        # Solo aplicar si tita es diferente de None y mayor a 1e-6 grados (evitar errores numéricos)
+        if self.tita is not None and abs(self.tita) > 1e-6:
+            theta = np.radians(self.tita)
+            cos_t = np.cos(theta)
+            sin_t = np.sin(theta)
+            
+            # Matriz de rotación 2D en el plano y-z
+            rot_2d = np.array([
+                [cos_t, -sin_t],
+                [sin_t,  cos_t]
+            ], dtype=dtype)
+            
+            # Aplicar rotación: [y_new, z_new] = [y_old, z_old] @ rot_2d
+            yz_matrix = np.column_stack((self.y_local, self.z_local))
+            yz_rotated = yz_matrix @ rot_2d
+            
+            self.y_local = yz_rotated[:, 0]
+            self.z_local = yz_rotated[:, 1]
+            
+            # Re-normalizar después de la rotación
+            norma_y = np.linalg.norm(self.y_local)
+            if norma_y > tol:
+                self.y_local = self.y_local / norma_y
+            
+            norma_z = np.linalg.norm(self.z_local)
+            if norma_z > tol:
+                self.z_local = self.z_local / norma_z
+        
+        # 6. Corrección final: asegurar que z_local = x_local × y_local (ortonormalidad exacta)
+        z_corrected = np.cross(self.x_local, self.y_local)
+        norma_z_corrected = np.linalg.norm(z_corrected)
+        if norma_z_corrected > tol:
+            self.z_local = z_corrected / norma_z_corrected
+        
+        # 7. Verificación final: normalizar todos los vectores
+        norma_x = np.linalg.norm(self.x_local)
+        if norma_x > tol:
+            self.x_local = self.x_local / norma_x
+        
+        norma_y = np.linalg.norm(self.y_local)
+        if norma_y > tol:
+            self.y_local = self.y_local / norma_y
+        
+        norma_z = np.linalg.norm(self.z_local)
+        if norma_z > tol:
+            self.z_local = self.z_local / norma_z
+        
+        return True
+    

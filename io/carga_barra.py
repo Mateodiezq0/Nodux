@@ -7,6 +7,7 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 import pandas as pd
+import numpy as np
 from typing import List, Dict, Optional
 from core.barra import Barra
 from core.nodos import Nodo
@@ -104,6 +105,14 @@ def cargar_barras_desde_excel(ruta_archivo: str, nombre_hoja: str = "Barra", nod
                 barra.nodo_f_obj = nodos[nodo_f]
             else:
                 print(f"Advertencia: Nodo final {nodo_f} no encontrado para la barra {id_barra}")
+            
+            # Calcular longitud L a partir de las coordenadas de los nodos
+            if barra.nodo_i_obj is not None and barra.nodo_f_obj is not None:
+                # Calcular distancia euclidiana en 3D
+                dx = barra.nodo_f_obj.x - barra.nodo_i_obj.x
+                dy = barra.nodo_f_obj.y - barra.nodo_i_obj.y
+                dz = barra.nodo_f_obj.z - barra.nodo_i_obj.z
+                barra.L = np.sqrt(dx**2 + dy**2 + dz**2)
             
             barras.append(barra)
         except (ValueError, TypeError) as e:
