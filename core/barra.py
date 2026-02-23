@@ -305,3 +305,229 @@ class Barra:
         
         return K_global
     
+    def construir_matriz_rotacion_2d_12x12(self) -> np.ndarray:
+        """
+        Construye la matriz de rotación 2D de 12x12 para rotar en el plano y-z.
+        
+        La matriz de rotación 2D en el plano y-z se aplica a las componentes Y y Z
+        de cada bloque (traslaciones y rotaciones de ambos nodos), dejando X sin cambios.
+        
+        La matriz tiene la forma:
+        R_2d_12x12 = [1    0    0    0    0    0    0    0    0    0    0    0 ]
+                     [0  cos  -sin   0    0    0    0    0    0    0    0    0 ]
+                     [0  sin   cos   0    0    0    0    0    0    0    0    0 ]
+                     [0    0    0    1    0    0    0    0    0    0    0    0 ]
+                     [0    0    0    0  cos  -sin   0    0    0    0    0    0 ]
+                     [0    0    0    0  sin   cos   0    0    0    0    0    0 ]
+                     [0    0    0    0    0    0    1    0    0    0    0    0 ]
+                     [0    0    0    0    0    0    0  cos  -sin   0    0    0 ]
+                     [0    0    0    0    0    0    0  sin   cos   0    0    0 ]
+                     [0    0    0    0    0    0    0    0    0    1    0    0 ]
+                     [0    0    0    0    0    0    0    0    0    0  cos  -sin]
+                     [0    0    0    0    0    0    0    0    0    0  sin   cos ]
+        
+        Retorna:
+        --------
+        np.ndarray
+            Matriz de rotación 2D de 12x12
+        """
+        # Verificar si tita está definido
+        if self.tita is None or abs(self.tita) < 1e-6:
+            # Si no hay rotación, retornar matriz identidad
+            return np.eye(12, dtype=np.float64)
+        
+        # Calcular ángulo en radianes
+        theta = np.radians(self.tita)
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        
+        # Matriz de rotación 2D en el plano y-z
+        rot_2d = np.array([
+            [cos_t, -sin_t],
+            [sin_t,  cos_t]
+        ], dtype=np.float64)
+        
+        # Construir matriz 12x12
+        R_2d_12x12 = np.eye(12, dtype=np.float64)
+        
+        # Aplicar rotación 2D a los bloques Y-Z:
+        # Bloque 1: Traslaciones nodo inicial (Y=1, Z=2)
+        R_2d_12x12[1:3, 1:3] = rot_2d
+        
+        # Bloque 2: Rotaciones nodo inicial (Y=4, Z=5)
+        R_2d_12x12[4:6, 4:6] = rot_2d
+        
+        # Bloque 3: Traslaciones nodo final (Y=7, Z=8)
+        R_2d_12x12[7:9, 7:9] = rot_2d
+        
+        # Bloque 4: Rotaciones nodo final (Y=10, Z=11)
+        R_2d_12x12[10:12, 10:12] = rot_2d
+        
+        return R_2d_12x12
+    
+    def transformar_reacciones_empotramiento_a_global(self) -> None:
+        """
+        Transforma las reacciones de empotramiento de coordenadas locales a globales.
+        
+        El proceso consta de dos rotaciones:
+        1. Rotación 2D en el plano y-z (usando el ángulo tita)
+        2. Rotación completa a coordenadas globales (usando la matriz T)
+        
+        Los resultados se guardan en:
+        - reaccion_de_empotramiento_rotado_eje: Resultado de la primera rotación
+        - reaccion_de_empotramiento_global: Resultado de la segunda rotación
+        - reaccion_nudo_i_equivalente_global: Primeros 6 elementos del resultado global
+        - reaccion_nudo_f_equivalente_global: Últimos 6 elementos del resultado global
+        """
+        # Verificar que existe reaccion_de_empotramiento_local_total
+        if self.reaccion_de_empotramiento_local_total is None:
+            return
+        
+        # Paso 1: Construir matriz de rotación 2D de 12x12
+        R_2d_12x12 = self.construir_matriz_rotacion_2d_12x12()
+        
+        # Paso 2: Aplicar primera rotación (traspuesta de R_2d_12x12)
+        # reaccion_rotada = R_2d_12x12^T @ reaccion_local_total
+        self.reaccion_de_empotramiento_rotado_eje = -(R_2d_12x12.T @ self.reaccion_de_empotramiento_local_total)
+        
+        # Paso 3: Construir matriz de rotación T de 12x12
+        T = self.construir_matriz_rotacion_T_12x12()
+        
+        # Paso 4: Aplicar segunda rotación (traspuesta de T)
+        # reaccion_global = T^T @ reaccion_rotada
+        self.reaccion_de_empotramiento_global = T.T @ self.reaccion_de_empotramiento_rotado_eje
+        
+        # Paso 5: Separar según nudo
+        # Primeros 6 elementos: nodo inicial
+        self.reaccion_nudo_i_equivalente_global = self.reaccion_de_empotramiento_global[:6].copy()
+        
+        # Últimos 6 elementos: nodo final
+        self.reaccion_nudo_f_equivalente_global = self.reaccion_de_empotramiento_global[6:].copy()
+    
+    def calcular_longitud_y_bases(self) -> bool:
+        """
+        Calcula la longitud de la barra y los ejes locales (bases).
+        Retorna True si se calcularon correctamente, False en caso contrario.
+        """
+        if self.nodo_i_obj is None or self.nodo_f_obj is None:
+            return False
+        
+        # Calcular longitud
+        dx = self.nodo_f_obj.x - self.nodo_i_obj.x
+        dy = self.nodo_f_obj.y - self.nodo_i_obj.y
+        dz = self.nodo_f_obj.z - self.nodo_i_obj.z
+        self.L = np.sqrt(dx*dx + dy*dy + dz*dz)
+        
+        if self.L == 0:
+            return False
+        
+        # Calcular terna de ejes locales
+        return self.calcular_terna_ejes_locales()
+    
+    def Kglobal(self) -> np.ndarray:
+        """
+        Calcula la matriz de rigidez global (12x12) de la barra.
+        Retorna la matriz K global transformada desde coordenadas locales.
+        """
+        # Verificar que tenemos las propiedades necesarias
+        if self.E is None or self.A is None or self.I_y is None or self.I_z is None:
+            raise ValueError(f"Barra {self.id}: Faltan propiedades (E, A, I_y, I_z)")
+        
+        if self.L is None or self.L == 0:
+            if not self.calcular_longitud_y_bases():
+                raise ValueError(f"Barra {self.id}: No se pudo calcular la longitud")
+        
+        # Calcular K_local
+        K_local = self._calcular_K_local()
+        
+        # Transformar a global
+        K_global = self.transformar_K_local_a_global_con_Tx_Ty_Tz(K_local)
+        
+        # Guardar en k_global_dat
+        self.k_global_dat = K_global
+        
+        return K_global
+    
+    def _calcular_K_local(self) -> np.ndarray:
+        """
+        Calcula la matriz de rigidez local (12x12) para una viga 3D de Euler-Bernoulli.
+        """
+        # Inicializar matriz
+        K = np.zeros((12, 12))
+        
+        # Constantes
+        EA_L = self.E * self.A / self.L
+        EIy_L = self.E * self.I_y / self.L
+        EIy_L2 = self.E * self.I_y / (self.L**2)
+        EIy_L3 = self.E * self.I_y / (self.L**3)
+        
+        EIz_L = self.E * self.I_z / self.L
+        EIz_L2 = self.E * self.I_z / (self.L**2)
+        EIz_L3 = self.E * self.I_z / (self.L**3)
+        
+        GJ_L = (self.G * self.J / self.L) if (self.G is not None and self.J is not None) else 0.0
+        
+        # Fuerza axial (DOF 0 y 6)
+        K[0, 0] = EA_L
+        K[0, 6] = -EA_L
+        K[6, 0] = -EA_L
+        K[6, 6] = EA_L
+        
+        # Torsión (DOF 3 y 9)
+        if GJ_L > 0:
+            K[3, 3] = GJ_L
+            K[3, 9] = -GJ_L
+            K[9, 3] = -GJ_L
+            K[9, 9] = GJ_L
+        
+        # Flexión en Y (DOF 1, 5, 7, 11)
+        K[1, 1] = 12 * EIz_L3
+        K[1, 5] = 6 * EIz_L2
+        K[1, 7] = -12 * EIz_L3
+        K[1, 11] = 6 * EIz_L2
+        
+        K[5, 1] = 6 * EIz_L2
+        K[5, 5] = 4 * EIz_L
+        K[5, 7] = -6 * EIz_L2
+        K[5, 11] = 2 * EIz_L
+        
+        K[7, 1] = -12 * EIz_L3
+        K[7, 5] = -6 * EIz_L2
+        K[7, 7] = 12 * EIz_L3
+        K[7, 11] = -6 * EIz_L2
+        
+        K[11, 1] = 6 * EIz_L2
+        K[11, 5] = 2 * EIz_L
+        K[11, 7] = -6 * EIz_L2
+        K[11, 11] = 4 * EIz_L
+        
+        # Flexión en Z (DOF 2, 4, 8, 10)
+        K[2, 2] = 12 * EIy_L3
+        K[2, 4] = -6 * EIy_L2
+        K[2, 8] = -12 * EIy_L3
+        K[2, 10] = -6 * EIy_L2
+        
+        K[4, 2] = -6 * EIy_L2
+        K[4, 4] = 4 * EIy_L
+        K[4, 8] = 6 * EIy_L2
+        K[4, 10] = 2 * EIy_L
+        
+        K[8, 2] = -12 * EIy_L3
+        K[8, 4] = 6 * EIy_L2
+        K[8, 8] = 12 * EIy_L3
+        K[8, 10] = 6 * EIy_L2
+        
+        K[10, 2] = -6 * EIy_L2
+        K[10, 4] = 2 * EIy_L
+        K[10, 8] = 6 * EIy_L2
+        K[10, 10] = 4 * EIy_L
+        
+        return K
+    
+    def actualizar_reacciones_global(self) -> None:
+        """
+        Actualiza las reacciones de empotramiento transformándolas a coordenadas globales.
+        """
+        self.transformar_reacciones_empotramiento_a_global()
+    
+     

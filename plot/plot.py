@@ -53,8 +53,16 @@ def _cargar_datos():
 
 def obtener_coordenadas_barra(barra, nodos_dict: Dict):
     """Obtiene las coordenadas de inicio y fin de una barra"""
-    nodo_i = nodos_dict.get(barra.nodo_i)
-    nodo_f = nodos_dict.get(barra.nodo_f)
+    # Primero intentar usar los objetos nodo directamente si están disponibles
+    if hasattr(barra, 'nodo_i_obj') and barra.nodo_i_obj is not None:
+        nodo_i = barra.nodo_i_obj
+    else:
+        nodo_i = nodos_dict.get(barra.nodo_i)
+    
+    if hasattr(barra, 'nodo_f_obj') and barra.nodo_f_obj is not None:
+        nodo_f = barra.nodo_f_obj
+    else:
+        nodo_f = nodos_dict.get(barra.nodo_f)
     
     if nodo_i is None or nodo_f is None:
         # Si no hay objetos nodo, intentar usar los IDs directamente
