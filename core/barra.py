@@ -13,7 +13,7 @@ class Barra:
     E: float  # Módulo de elasticidad (Tn/cm^2)
     A: Optional[float] = None # Área de la sección transversal (si no se calcula automáticamente)
     I_y: float = None  # Momento de inercia en torno al eje Y
-    I_z: float = None  # Momento de inercia en torno al eje Z
+    I_z: float = None  # Momento de inercia en tsorno al eje Z
     G: float  = None # Módulo de corte
     J: float  = None # Módulo de torsión
     L: Optional[float] = None  # Longitud del perfil (si no se calcula automáticamente)
@@ -130,28 +130,29 @@ class Barra:
         else:
             # CASO ESPECIAL: Barra vertical (x_local paralelo a Z)
             # Vector de referencia: eje X global negativo
-            up = np.array([1.0, 0.0, 0.0], dtype=dtype)
+            up = np.array([0.0, 1.0, 0.0], dtype=dtype)
             
             # Calcular z_local = normalize(cross(x_local, up))
-            y_temp = np.cross(self.x_local, up)
-            norma_y = np.linalg.norm(y_temp)
-            
-            if norma_y < tol:
-                return False
-            
-            # Normalizar z_local
-            self.y_local = y_temp / norma_y
-            print("y_local AAAAAAAAAAAAA", self.y_local)
-            # Calcular y_local = normalize(cross(z_local, x_local))
-            z_temp = np.cross(self.y_local, self.x_local)
+            z_temp = np.cross(self.x_local, up)
             norma_z = np.linalg.norm(z_temp)
             
             if norma_z < tol:
                 return False
             
+            # Normalizar z_local
+            self.z_local = z_temp / norma_z
+            print("z_local AAAAAAAAAAAAA", self.z_local)
+            # Calcular y_local = normalize(cross(z_local, x_local))
+            y_temp = np.cross(self.z_local, self.x_local)
+            norma_y = np.linalg.norm(y_temp)
+            
+            if norma_y < tol:
+                return False
+            
             # Normalizar y_local
-            self.z_local = z_temp / norma_y
-            print("z_local BBBBBBBBBBBBBBBBB", self.z_local)
+            self.y_local = y_temp / norma_y
+            print("y_local BBBBBBBBBBBBBBBBB", self.y_local)
+
         
         # 5. Aplicar rotación tita si existe y es significativa (rotación alrededor del eje x_local)
         # Solo aplicar si tita es diferente de None y mayor a 1e-6 grados (evitar errores numéricos)

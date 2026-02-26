@@ -212,191 +212,210 @@ def crear_estructura_supertesteo():
 def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
     """
     Exporta los resultados de la estructura a un archivo Excel.
-    Incluye:
-    - Reacciones de empotramiento (local y global) por barra
-    - Fuerzas internas (F_interna) por barra (global)
+    Esta versión accede a atributos de forma segura (getattr), normaliza tamaños
+    y crea hojas aún si algunos atributos cambiaron de nombre.
     """
-    # Nombres de los DOFs
+    import numpy as _np
+    from pathlib import Path as _Path
+
     nombres_dofs = [
         "Fx_i", "Fy_i", "Fz_i", "Mx_i", "My_i", "Mz_i",
         "Fx_f", "Fy_f", "Fz_f", "Mx_f", "My_f", "Mz_f"
     ]
-    
-    # ========== REACCIONES DE EMPOTRAMIENTO ==========
+
+    def _safe_array(obj, attr, length, dtype=float):
+        val = getattr(obj, attr, None)
+        if val is None:
+            return _np.zeros(length, dtype=dtype)
+        arr = _np.asarray(val, dtype=dtype)
+        if arr.size != length:
+            out = _np.zeros(length, dtype=dtype)
+            out[:min(length, arr.size)] = arr.ravel()[:length]
+            return out
+        return arr
+
+    # Reacciones por barra (local / global)
     datos_reacciones_local = []
     datos_reacciones_global = []
-    
-    for barra in estructura.barras:
-        # Reacciones en local
-        reacc_local = barra.reaccion_de_empotramiento_local_total
+    for barra in getattr(estructura, 'barras', []):
+        reacc_local = _safe_array(barra, 'reaccion_de_empotramiento_local_total', 12)
+        reacc_global = _safe_array(barra, 'reaccion_de_empotramiento_global', 12)
         datos_reacciones_local.append({
-            'Barra ID': barra.id,
-            'Nodo Inicial': barra.nodo_i,
-            'Nodo Final': barra.nodo_f,
-            **{nombres_dofs[i]: reacc_local[i] for i in range(12)}
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            **{nombres_dofs[i]: float(reacc_local[i]) for i in range(12)}
         })
-        
-        # Reacciones en global
-        reacc_global = barra.reaccion_de_empotramiento_global
         datos_reacciones_global.append({
-            'Barra ID': barra.id,
-            'Nodo Inicial': barra.nodo_i,
-            'Nodo Final': barra.nodo_f,
-            **{nombres_dofs[i]: reacc_global[i] for i in range(12)}
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            **{nombres_dofs[i]: float(reacc_global[i]) for i in range(12)}
         })
-    
+
     df_reacciones_local = pd.DataFrame(datos_reacciones_local)
     df_reacciones_global = pd.DataFrame(datos_reacciones_global)
-    
-    # ========== FUERZAS INTERNAS (F_INTERNA) ==========
+
+    # Fuerzas internas (F_internas puede tener formato diverso)
     datos_fuerzas_internas = []
-    
-    for idx, barra in enumerate(estructura.barras):
-        F_interna = F_internas[idx]
+    for idx, barra in enumerate(getattr(estructura, 'barras', [])):
+        if F_internas is None or idx >= len(F_internas):
+            F_interna = _np.zeros(12)
+        else:
+            F_interna = _np.asarray(F_internas[idx])
+            if F_interna.size != 12:
+                tmp = _np.zeros(12)
+                tmp[:min(12, F_interna.size)] = F_interna.ravel()[:12]
+                F_interna = tmp
         datos_fuerzas_internas.append({
-            'Barra ID': barra.id,
-            'Nodo Inicial': barra.nodo_i,
-            'Nodo Final': barra.nodo_f,
-            **{nombres_dofs[i]: F_interna[i] for i in range(12)}
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            **{nombres_dofs[i]: float(F_interna[i]) for i in range(12)}
         })
-    
     df_fuerzas_internas = pd.DataFrame(datos_fuerzas_internas)
-    
-    # ========== RESUMEN POR BARRA ==========
+
+    # Resumen por barra
     datos_resumen = []
-    for idx, barra in enumerate(estructura.barras):
-        F_interna = F_internas[idx]
-        # Extraer fuerzas y momentos en nodo inicial y final
+    for idx, barra in enumerate(getattr(estructura, 'barras', [])):
+        F_interna = _np.zeros(12)
+        if F_internas is not None and idx < len(F_internas):
+            arr = _np.asarray(F_internas[idx])
+            F_interna[:min(12, arr.size)] = arr.ravel()[:12]
         datos_resumen.append({
-            'Barra ID': barra.id,
-            'Nodo Inicial': barra.nodo_i,
-            'Nodo Final': barra.nodo_f,
-            'Longitud (cm)': barra.L if barra.L is not None else 0.0,
-            'Fx_i (kN)': F_interna[0],
-            'Fy_i (kN)': F_interna[1],
-            'Fz_i (kN)': F_interna[2],
-            'Mx_i (kN·cm)': F_interna[3],
-            'My_i (kN·cm)': F_interna[4],
-            'Mz_i (kN·cm)': F_interna[5],
-            'Fx_f (kN)': F_interna[6],
-            'Fy_f (kN)': F_interna[7],
-            'Fz_f (kN)': F_interna[8],
-            'Mx_f (kN·cm)': F_interna[9],
-            'My_f (kN·cm)': F_interna[10],
-            'Mz_f (kN·cm)': F_interna[11],
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            'Longitud (cm)': getattr(barra, 'L', 0.0) or 0.0,
+            'Fx_i (kN)': float(F_interna[0]),
+            'Fy_i (kN)': float(F_interna[1]),
+            'Fz_i (kN)': float(F_interna[2]),
+            'Mx_i (kN·cm)': float(F_interna[3]),
+            'My_i (kN·cm)': float(F_interna[4]),
+            'Mz_i (kN·cm)': float(F_interna[5]),
+            'Fx_f (kN)': float(F_interna[6]),
+            'Fy_f (kN)': float(F_interna[7]),
+            'Fz_f (kN)': float(F_interna[8]),
+            'Mx_f (kN·cm)': float(F_interna[9]),
+            'My_f (kN·cm)': float(F_interna[10]),
+            'Mz_f (kN·cm)': float(F_interna[11]),
         })
-    
     df_resumen = pd.DataFrame(datos_resumen)
-    
-    # ========== REACCIONES DE EMPOTRAMIENTO POR NODO ==========
+
+    # Reacciones por nodo (i / f)
     datos_reacciones_nodo_i = []
     datos_reacciones_nodo_f = []
-    
-    for barra in estructura.barras:
-        # Nodo inicial
-        reacc_i_local = barra.reaccion_de_empotramiento_i_local
-        reacc_i_global = barra.reaccion_nudo_i_equivalente_global
+    for barra in getattr(estructura, 'barras', []):
+        reacc_i_local = _safe_array(barra, 'reaccion_de_empotramiento_i_local', 6)
+        reacc_f_local = _safe_array(barra, 'reaccion_de_empotramiento_f_local', 6)
+        reacc_i_global = _safe_array(barra, 'reaccion_nudo_i_equivalente_global', 6)
+        reacc_f_global = _safe_array(barra, 'reaccion_nudo_f_equivalente_global', 6)
+
         datos_reacciones_nodo_i.append({
-            'Barra ID': barra.id,
-            'Nodo ID': barra.nodo_i,
-            'Fx_local': reacc_i_local[0],
-            'Fy_local': reacc_i_local[1],
-            'Fz_local': reacc_i_local[2],
-            'Mx_local': reacc_i_local[3],
-            'My_local': reacc_i_local[4],
-            'Mz_local': reacc_i_local[5],
-            'Fx_global': reacc_i_global[0],
-            'Fy_global': reacc_i_global[1],
-            'Fz_global': reacc_i_global[2],
-            'Mx_global': reacc_i_global[3],
-            'My_global': reacc_i_global[4],
-            'Mz_global': reacc_i_global[5],
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo ID': getattr(barra, 'nodo_i', None),
+            'Fx_local': float(reacc_i_local[0]),
+            'Fy_local': float(reacc_i_local[1]),
+            'Fz_local': float(reacc_i_local[2]),
+            'Mx_local': float(reacc_i_local[3]),
+            'My_local': float(reacc_i_local[4]),
+            'Mz_local': float(reacc_i_local[5]),
+            'Fx_global': float(reacc_i_global[0]),
+            'Fy_global': float(reacc_i_global[1]),
+            'Fz_global': float(reacc_i_global[2]),
+            'Mx_global': float(reacc_i_global[3]),
+            'My_global': float(reacc_i_global[4]),
+            'Mz_global': float(reacc_i_global[5]),
         })
-        
-        # Nodo final
-        reacc_f_local = barra.reaccion_de_empotramiento_f_local
-        reacc_f_global = barra.reaccion_nudo_f_equivalente_global
+
         datos_reacciones_nodo_f.append({
-            'Barra ID': barra.id,
-            'Nodo ID': barra.nodo_f,
-            'Fx_local': reacc_f_local[0],
-            'Fy_local': reacc_f_local[1],
-            'Fz_local': reacc_f_local[2],
-            'Mx_local': reacc_f_local[3],
-            'My_local': reacc_f_local[4],
-            'Mz_local': reacc_f_local[5],
-            'Fx_global': reacc_f_global[0],
-            'Fy_global': reacc_f_global[1],
-            'Fz_global': reacc_f_global[2],
-            'Mx_global': reacc_f_global[3],
-            'My_global': reacc_f_global[4],
-            'Mz_global': reacc_f_global[5],
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo ID': getattr(barra, 'nodo_f', None),
+            'Fx_local': float(reacc_f_local[0]),
+            'Fy_local': float(reacc_f_local[1]),
+            'Fz_local': float(reacc_f_local[2]),
+            'Mx_local': float(reacc_f_local[3]),
+            'My_local': float(reacc_f_local[4]),
+            'Mz_local': float(reacc_f_local[5]),
+            'Fx_global': float(reacc_f_global[0]),
+            'Fy_global': float(reacc_f_global[1]),
+            'Fz_global': float(reacc_f_global[2]),
+            'Mx_global': float(reacc_f_global[3]),
+            'My_global': float(reacc_f_global[4]),
+            'Mz_global': float(reacc_f_global[5]),
         })
-    
+
     df_reacciones_nodo_i = pd.DataFrame(datos_reacciones_nodo_i)
     df_reacciones_nodo_f = pd.DataFrame(datos_reacciones_nodo_f)
-    
-    # ========== F_LOCAL Y REACCIÓN EMPOTRAMIENTO_I POR CARGA ==========
+
+    # f_local y reacciones por carga
     datos_cargas_local = []
-    for barra in estructura.barras:
-        for carga in barra.cargas:
+    for barra in getattr(estructura, 'barras', []):
+        for carga in getattr(barra, 'cargas', []):
+            f_local = _safe_array(carga, 'f_local', 3)
+            reacc_i = _safe_array(barra, 'reaccion_de_empotramiento_i_local', 6)
+            reacc_f = _safe_array(barra, 'reaccion_de_empotramiento_f_local', 6)
             datos_cargas_local.append({
-                'Carga ID': carga.id,
-                'Barra ID': barra.id,
-                'Nodo Inicial': barra.nodo_i,
-                'Nodo Final': barra.nodo_f,
-                'f_local_x': carga.f_local[0],
-                'f_local_y': carga.f_local[1],
-                'f_local_z': carga.f_local[2],
-                'Reacc_i_Fx_local': barra.reaccion_de_empotramiento_i_local[0],
-                'Reacc_i_Fy_local': barra.reaccion_de_empotramiento_i_local[1],
-                'Reacc_i_Fz_local': barra.reaccion_de_empotramiento_i_local[2],
-                'Reacc_i_Mx_local': barra.reaccion_de_empotramiento_i_local[3],
-                'Reacc_i_My_local': barra.reaccion_de_empotramiento_i_local[4],
-                'Reacc_i_Mz_local': barra.reaccion_de_empotramiento_i_local[5],
-                'Reacc_f_Fx_local': barra.reaccion_de_empotramiento_f_local[0],
-                'Reacc_f_Fy_local': barra.reaccion_de_empotramiento_f_local[1],
-                'Reacc_f_Fz_local': barra.reaccion_de_empotramiento_f_local[2],
-                'Reacc_f_Mx_local': barra.reaccion_de_empotramiento_f_local[3],
-                'Reacc_f_My_local': barra.reaccion_de_empotramiento_f_local[4],
-                'Reacc_f_Mz_local': barra.reaccion_de_empotramiento_f_local[5],
+                'Carga ID': getattr(carga, 'id', None),
+                'Barra ID': getattr(barra, 'id', None),
+                'Nodo Inicial': getattr(barra, 'nodo_i', None),
+                'Nodo Final': getattr(barra, 'nodo_f', None),
+                'f_local_x': float(f_local[0]),
+                'f_local_y': float(f_local[1]),
+                'f_local_z': float(f_local[2]),
+                'Reacc_i_Fx_local': float(reacc_i[0]),
+                'Reacc_i_Fy_local': float(reacc_i[1]),
+                'Reacc_i_Fz_local': float(reacc_i[2]),
+                'Reacc_i_Mx_local': float(reacc_i[3]),
+                'Reacc_i_My_local': float(reacc_i[4]),
+                'Reacc_i_Mz_local': float(reacc_i[5]),
+                'Reacc_f_Fx_local': float(reacc_f[0]),
+                'Reacc_f_Fy_local': float(reacc_f[1]),
+                'Reacc_f_Fz_local': float(reacc_f[2]),
+                'Reacc_f_Mx_local': float(reacc_f[3]),
+                'Reacc_f_My_local': float(reacc_f[4]),
+                'Reacc_f_Mz_local': float(reacc_f[5]),
             })
     df_cargas_local = pd.DataFrame(datos_cargas_local)
 
-    # ========== VECTOR NODAL EQUIVALENTE ==========
+    # Vector nodal equivalente
     nombres_dofs_nodo = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     datos_vector_nodal = []
-    vector_nodal = estructura.vector_nodal_equivalente
-    n_nodos = len(estructura.nodos)
-    for nodo in estructura.nodos:
+    vector_nodal = getattr(estructura, 'vector_nodal_equivalente', None)
+    if vector_nodal is None:
+        vector_nodal = _np.zeros(len(getattr(estructura, 'nodos', [])) * 6)
+    for nodo in getattr(estructura, 'nodos', []):
         base = (nodo.id - 1) * 6
         fila = {'Nodo ID': nodo.id}
         for i, nombre in enumerate(nombres_dofs_nodo):
-            fila[nombre] = vector_nodal[base + i]
+            fila[nombre] = float(vector_nodal[base + i]) if base + i < len(vector_nodal) else 0.0
         datos_vector_nodal.append(fila)
     df_vector_nodal = pd.DataFrame(datos_vector_nodal)
-    
-    # ========== TERNA DE EJES LOCALES POR BARRA ==========
+
+    # Terna ejes locales
     datos_ejes_locales = []
-    for barra in estructura.barras:
-        # Asegurar que la terna de ejes locales esté calculada
+    for barra in getattr(estructura, 'barras', []):
         try:
-            if barra.x_local is None or barra.y_local is None or barra.z_local is None:
-                barra.calcular_terna_ejes_locales()
+            if getattr(barra, 'x_local', None) is None or getattr(barra, 'y_local', None) is None or getattr(barra, 'z_local', None) is None:
+                if hasattr(barra, 'calcular_terna_ejes_locales'):
+                    barra.calcular_terna_ejes_locales()
         except Exception:
             pass
 
-        # Preparar valores (si no existen, usar ceros)
-        xlx, xly, xlz = (barra.x_local.tolist() if getattr(barra, 'x_local', None) is not None else [0.0, 0.0, 0.0])
-        ylx, yly, ylz = (barra.y_local.tolist() if getattr(barra, 'y_local', None) is not None else [0.0, 0.0, 0.0])
-        zlx, zly, zlz = (barra.z_local.tolist() if getattr(barra, 'z_local', None) is not None else [0.0, 0.0, 0.0])
+        xl = getattr(barra, 'x_local', [0.0, 0.0, 0.0])
+        yl = getattr(barra, 'y_local', [0.0, 0.0, 0.0])
+        zl = getattr(barra, 'z_local', [0.0, 0.0, 0.0])
+
+        xlx, xly, xlz = list(xl)[:3] if len(list(xl)) >= 3 else (0.0, 0.0, 0.0)
+        ylx, yly, ylz = list(yl)[:3] if len(list(yl)) >= 3 else (0.0, 0.0, 0.0)
+        zlx, zly, zlz = list(zl)[:3] if len(list(zl)) >= 3 else (0.0, 0.0, 0.0)
 
         datos_ejes_locales.append({
-            'Barra ID': barra.id,
-            'Nodo Inicial': barra.nodo_i,
-            'Nodo Final': barra.nodo_f,
-            'Longitud (cm)': barra.L if getattr(barra, 'L', None) is not None else 0.0,
-            'tita (deg)': barra.tita if getattr(barra, 'tita', None) is not None else 0.0,
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            'Longitud (cm)': getattr(barra, 'L', 0.0) or 0.0,
+            'tita (deg)': getattr(barra, 'tita', 0.0) or 0.0,
             'x_local_x': xlx,
             'x_local_y': xly,
             'x_local_z': xlz,
@@ -407,84 +426,48 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
             'z_local_y': zly,
             'z_local_z': zlz,
         })
-
     df_ejes_locales = pd.DataFrame(datos_ejes_locales)
 
-    # ========== ESCRIBIR A EXCEL ==========
-    ruta_excel = Path(__file__).parent / nombre_archivo
-    
+    # Escribir Excel
+    ruta_excel = _Path(__file__).parent / nombre_archivo
     with pd.ExcelWriter(ruta_excel, engine='openpyxl') as writer:
-        # Hoja 1: Resumen
         df_resumen.to_excel(writer, sheet_name='Resumen_Fuerzas_Internas', index=False)
-        
-        # Hoja 2: Fuerzas Internas (completo)
         df_fuerzas_internas.to_excel(writer, sheet_name='F_Interna_Global', index=False)
-        
-        # Hoja 3: Reacciones de Empotramiento Local
         df_reacciones_local.to_excel(writer, sheet_name='Reacciones_Empot_Local', index=False)
-        
-        # Hoja 4: Reacciones de Empotramiento Global
         df_reacciones_global.to_excel(writer, sheet_name='Reacciones_Empot_Global', index=False)
-        
-        # Hoja 5: Reacciones por Nodo Inicial
         df_reacciones_nodo_i.to_excel(writer, sheet_name='Reacciones_Nodo_Inicial', index=False)
-        
-        # Hoja 6: Reacciones por Nodo Final
         df_reacciones_nodo_f.to_excel(writer, sheet_name='Reacciones_Nodo_Final', index=False)
-        
-        # Hoja 7: Vector Nodal Equivalente
         df_vector_nodal.to_excel(writer, sheet_name='Vector_Nodal_Equivalente', index=False)
-        
-        # Hoja 8: f_local y Reacción Empotramiento_i por Carga
         df_cargas_local.to_excel(writer, sheet_name='f_local_Reacc_i_por_Carga', index=False)
-
-        # Hoja 9: Terna de ejes locales (componentes)
         df_ejes_locales.to_excel(writer, sheet_name='Ejes_Locales', index=False)
-        
-        # Ajustar ancho de columnas
+
+        # Ajustar anchos
         from openpyxl.utils import get_column_letter
-        for sheet_name in writer.sheets:
-            worksheet = writer.sheets[sheet_name]
-            df = None
-            if sheet_name == 'Resumen_Fuerzas_Internas':
-                df = df_resumen
-            elif sheet_name == 'F_Interna_Global':
-                df = df_fuerzas_internas
-            elif sheet_name == 'Reacciones_Empot_Local':
-                df = df_reacciones_local
-            elif sheet_name == 'Reacciones_Empot_Global':
-                df = df_reacciones_global
-            elif sheet_name == 'Reacciones_Nodo_Inicial':
-                df = df_reacciones_nodo_i
-            elif sheet_name == 'Reacciones_Nodo_Final':
-                df = df_reacciones_nodo_f
-            elif sheet_name == 'Vector_Nodal_Equivalente':
-                df = df_vector_nodal
-            elif sheet_name == 'f_local_Reacc_i_por_Carga':
-                df = df_cargas_local
-            elif sheet_name == 'Ejes_Locales':
-                df = df_ejes_locales
-            
-            if df is not None:
-                for idx, col_name in enumerate(df.columns, 1):
-                    column_letter = get_column_letter(idx)
-                    max_length = max(
-                        len(str(col_name)),
-                        df[col_name].astype(str).map(len).max() if len(df) > 0 else 0
-                    )
-                    adjusted_width = min(max_length + 2, 25)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
-    
+        sheets_map = {
+            'Resumen_Fuerzas_Internas': df_resumen,
+            'F_Interna_Global': df_fuerzas_internas,
+            'Reacciones_Empot_Local': df_reacciones_local,
+            'Reacciones_Empot_Global': df_reacciones_global,
+            'Reacciones_Nodo_Inicial': df_reacciones_nodo_i,
+            'Reacciones_Nodo_Final': df_reacciones_nodo_f,
+            'Vector_Nodal_Equivalente': df_vector_nodal,
+            'f_local_Reacc_i_por_Carga': df_cargas_local,
+            'Ejes_Locales': df_ejes_locales
+        }
+        for sheet_name, df in sheets_map.items():
+            worksheet = writer.sheets.get(sheet_name)
+            if worksheet is None or df is None:
+                continue
+            for idx, col_name in enumerate(df.columns, 1):
+                column_letter = get_column_letter(idx)
+                max_length = max(
+                    len(str(col_name)),
+                    df[col_name].astype(str).map(len).max() if len(df) > 0 else 0
+                )
+                adjusted_width = min(max_length + 2, 40)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+
     print(f"\nArchivo Excel creado: {ruta_excel}")
-    print("\nHojas creadas:")
-    print("  1. Resumen_Fuerzas_Internas - Resumen de fuerzas y momentos por barra")
-    print("  2. F_Interna_Global - Fuerzas internas completas (12 DOFs) en global")
-    print("  3. Reacciones_Empot_Local - Reacciones de empotramiento en coordenadas locales")
-    print("  4. Reacciones_Empot_Global - Reacciones de empotramiento en coordenadas globales")
-    print("  5. Reacciones_Nodo_Inicial - Reacciones en nodo inicial por barra")
-    print("  6. Reacciones_Nodo_Final - Reacciones en nodo final por barra")
-    print("  7. Vector_Nodal_Equivalente - Vector de cargas nodales equivalentes ensamblado (por nodo)")
-    print("  8. f_local_Reacc_i_por_Carga - f_local (fuerza en local) y reacciones de empotramiento i/f por carga")
 
 if __name__ == "__main__":
     print("=" * 80)

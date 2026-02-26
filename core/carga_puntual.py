@@ -28,21 +28,10 @@ class CargaPuntual:
 
 
 def reacciones_de_empotramiento(self, barra):
-        """
-        Calcula las reacciones equivalentes en los extremos de la barra
-        debidas a una carga puntual en cualquier parte de la barra, usando sistema local.
-        Convención:
-        - Xlocal = longitud de barra (de nodo_i a nodo_f)
-        - Zlocal = "horizontal" (Yglobal si barra es Xglobal)
-        - Ylocal = "vertical" (Zglobal si barra es Xglobal)
-        Retorna un vector de fuerzas nodales equivalentes (12) en local.
-        
-        El vector de carga se calcula aplicando rotaciones alrededor de los ejes:
-        - Rotaciones: alpha_z -> alpha_y -> alpha_x (orden Z, Y, X)
-        - Rotación positiva = antihorario (regla de la mano derecha)
-        """
+
         # 1. Asegura la base local correcta siempre
         barra.calcular_longitud_y_bases()
+        print("Base local de la barra:", barra.x_local, barra.y_local, barra.z_local)
 
         r_base = barra.construir_matriz_rotacion_R_3x3()
 
@@ -77,51 +66,23 @@ def reacciones_de_empotramiento(self, barra):
         Qz = f_local[2]
         #print("Qz:", Qz)
 
-        # -------- FLEXIÓN POR Qy (Momento en Z_local) ----------
-        # Fuerza local en Y
-
-        #fy_prueba = f_local * self.y_local
-        #fz_prueba = f_local * self.z_local
-        #print("Proyección de la fuerza local en Yglobal:", fy_prueba)
-        #print("Proyección de la fuerza local en Zglobal:", fz_prueba)  RE MAL
-
-        #fuerza_y = -fy_prueba
-        #fuerza_y = np.array([0, Qy, 0])
-        
-        
-        #print("fuerza_y:", fuerza_y)
-        #momento_z_vec = np.cross(self.x_local,fuerza_y)
-        #print("momento_z_vec:", momento_z_vec)
-        #print("eje_z_local:", self.z_local)
-        #signo_mz = np.sign(np.dot(momento_z_vec, self.z_local)) or 1    
-        #print("signo_mz:", signo_mz)
         """ voy a hacer una prueba con lo que dije"""
-        v_reaccion_global = - v_carga_global
+        f_reaccion_local = - f_local   #esto hice para poder sacar la reaccion directamente nomás y no dar vuelta después
 
-        reaccion_momento_global = np.cross(barra.x_local, v_reaccion_global)
-        reaccion_momento_global_unitario = reaccion_momento_global / np.linalg.norm(reaccion_momento_global)
-        signo_mz = np.sign(np.dot(reaccion_momento_global_unitario, barra.z_local)) or 1
-
+        reaccion_momento_local = np.cross(barra.x_local, f_reaccion_local)
+        print("Reacción de momento local:", reaccion_momento_local)
+        reaccion_momento_local_unitario = reaccion_momento_local / np.linalg.norm(reaccion_momento_local)
+        print("Reacción de momento local unitario:", reaccion_momento_local_unitario)
+        signo_mz = np.sign(np.dot(reaccion_momento_local_unitario, barra.z_local)) or 1
+        print("signo_mz:", signo_mz)
         Qi_y = Qy * ((lj / barra.L)**2) * (3 - 2 * (lj / barra.L))
         Qj_y = Qy * ((li / barra.L)**2) * (3 - 2 * (li / barra.L))
         Mi_z = signo_mz * (abs(Qy) * li * ((lj / barra.L)**2))
-        #print("Mi_z:", Mi_z)
+        print("Mi_z:", Mi_z)
         Mj_z = - signo_mz * (abs(Qy) * lj * ((li / barra.L)**2))
-        #print("Mj_z:", Mj_z)
+        print("Mj_z:", Mj_z)
 
-        # -------- FLEXIÓN POR Qz (Momento en Y_local) ----------
-        
-        #fuerza_z= -fz_prueba
-        #fuerza_z = np.array([0, 0, Qz])
-        
-        
-        #print("fuerza_z:", fuerza_z)
-        #momento_y_vec = np.cross(self.x_local, fuerza_z)
-        #print("momento_y_vec:", momento_y_vec)
-        #signo_my = np.sign(np.dot(momento_y_vec, self.y_local)) or 1
-        #print("signo_my:", signo_my)
-
-        signo_my = np.sign(np.dot(reaccion_momento_global_unitario, barra.y_local)) or 1
+        signo_my = np.sign(np.dot(reaccion_momento_local_unitario, barra.y_local)) or 1
 
         Qi_z = Qz * ((lj / barra.L)**2) * (3 - 2 * (lj / barra.L))
         Qj_z = Qz * ((li / barra.L)**2) * (3 - 2 * (li / barra.L))
@@ -138,6 +99,7 @@ def reacciones_de_empotramiento(self, barra):
         f_empotramiento[2] = -Qi_z      # Cortante (Z_local)
         f_empotramiento[4] =  Mi_y      # Momento flexor en Y_local
         f_empotramiento[5] =  Mi_z      # Momento flexor en Z_local
+        print("f_empotramiento nodo i:", f_empotramiento[:6])
 
         # Nodo final (j)
         f_empotramiento[6] = -Nj
