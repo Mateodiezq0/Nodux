@@ -376,6 +376,40 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         datos_vector_nodal.append(fila)
     df_vector_nodal = pd.DataFrame(datos_vector_nodal)
     
+    # ========== TERNA DE EJES LOCALES POR BARRA ==========
+    datos_ejes_locales = []
+    for barra in estructura.barras:
+        # Asegurar que la terna de ejes locales esté calculada
+        try:
+            if barra.x_local is None or barra.y_local is None or barra.z_local is None:
+                barra.calcular_terna_ejes_locales()
+        except Exception:
+            pass
+
+        # Preparar valores (si no existen, usar ceros)
+        xlx, xly, xlz = (barra.x_local.tolist() if getattr(barra, 'x_local', None) is not None else [0.0, 0.0, 0.0])
+        ylx, yly, ylz = (barra.y_local.tolist() if getattr(barra, 'y_local', None) is not None else [0.0, 0.0, 0.0])
+        zlx, zly, zlz = (barra.z_local.tolist() if getattr(barra, 'z_local', None) is not None else [0.0, 0.0, 0.0])
+
+        datos_ejes_locales.append({
+            'Barra ID': barra.id,
+            'Nodo Inicial': barra.nodo_i,
+            'Nodo Final': barra.nodo_f,
+            'Longitud (cm)': barra.L if getattr(barra, 'L', None) is not None else 0.0,
+            'tita (deg)': barra.tita if getattr(barra, 'tita', None) is not None else 0.0,
+            'x_local_x': xlx,
+            'x_local_y': xly,
+            'x_local_z': xlz,
+            'y_local_x': ylx,
+            'y_local_y': yly,
+            'y_local_z': ylz,
+            'z_local_x': zlx,
+            'z_local_y': zly,
+            'z_local_z': zlz,
+        })
+
+    df_ejes_locales = pd.DataFrame(datos_ejes_locales)
+
     # ========== ESCRIBIR A EXCEL ==========
     ruta_excel = Path(__file__).parent / nombre_archivo
     
@@ -403,6 +437,9 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         
         # Hoja 8: f_local y Reacción Empotramiento_i por Carga
         df_cargas_local.to_excel(writer, sheet_name='f_local_Reacc_i_por_Carga', index=False)
+
+        # Hoja 9: Terna de ejes locales (componentes)
+        df_ejes_locales.to_excel(writer, sheet_name='Ejes_Locales', index=False)
         
         # Ajustar ancho de columnas
         from openpyxl.utils import get_column_letter
@@ -425,6 +462,8 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
                 df = df_vector_nodal
             elif sheet_name == 'f_local_Reacc_i_por_Carga':
                 df = df_cargas_local
+            elif sheet_name == 'Ejes_Locales':
+                df = df_ejes_locales
             
             if df is not None:
                 for idx, col_name in enumerate(df.columns, 1):
