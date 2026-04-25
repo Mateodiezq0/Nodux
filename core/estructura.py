@@ -64,14 +64,18 @@ class Estructura:
                   #f" (ESTO ES LO QUE QUIERO VER DEL ENSAMBLE FINAL {idx_j}:{idx_j+6})")
         
         for carga_nodal in self.cargas_nodales:
-            print(vector_global)
             nodo_id = (carga_nodal.nodo_id - 1) * dof_por_nodo
             carga = carga_nodal.vector()
+            print(
+                f"\n[Ensamble F global] Carga nodal en nodo {carga_nodal.nodo_id} "
+                f"(DOFs globales {nodo_id} a {nodo_id + 5})"
+            )
+            print(
+                f"  Incremento [Fx,Fy,Fz,Mx,My,Mz] = "
+                f"[{carga[0]}, {carga[1]}, {carga[2]}, {carga[3]}, {carga[4]}, {carga[5]}]"
+            )
             vector_global[nodo_id:nodo_id+6] += carga
-            print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-            print()
-            print(f"Carga nodal en nodo {carga_nodal.nodo_id}: {carga} {nodo_id}:{nodo_id+6}")
-            print(vector_global)
+            print(f"  Vector F global completo tras sumar: {vector_global}")
 
         self.vector_nodal_equivalente = vector_global
         #print("Vector nodal equivalente (global): IMPORTANTISIMO", vector_global)
@@ -221,7 +225,7 @@ class Estructura:
                 print("F_emp_barra:", f_reacciones_empotramiento_de_barra)
                 print("F_interna sin empotramiento:", F_interna_sin_empotramiento)
                 print("F interna final:", F_interna)
-                print("================ XDXDXD ================")
+                print("  --- fin debug barra ---")
 
             lista_solicitaciones.append(F_interna)
         self.reacciones = np.array(lista_solicitaciones)

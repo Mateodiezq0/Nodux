@@ -41,6 +41,28 @@ class Barra:
     reaccion_nudo_f_equivalente_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))          #Reaccion equivalente de nodo final GLOBAL
     
     k_global_dat : Optional[np.ndarray] = None  # Matriz de rigidez global (12x12)
+
+    def _ejes_locales_validos(self) -> bool:
+        """
+        Verifica que x_local, y_local y z_local existan y sean vectores de 3 componentes finitas.
+        """
+        for eje in (self.x_local, self.y_local, self.z_local):
+            if eje is None:
+                return False
+            arr = np.asarray(eje, dtype=np.float64).ravel()
+            if arr.size != 3 or not np.all(np.isfinite(arr)):
+                return False
+        return True
+
+    def asegurar_terna_ejes_locales(self, forzar_recalculo: bool = False) -> bool:
+        """
+        Asegura que la terna local este disponible.
+        - Si ya es valida y no se fuerza, reutiliza valores existentes.
+        - Si falta o se fuerza, recalcula llamando a calcular_terna_ejes_locales().
+        """
+        if not forzar_recalculo and self._ejes_locales_validos():
+            return True
+        return self.calcular_terna_ejes_locales()
     
     def obtener_vector_unitario(self) -> Optional[np.ndarray]:
             """
@@ -141,7 +163,10 @@ class Barra:
             
             # Normalizar z_local
             self.z_local = z_temp / norma_z
-            print("z_local AAAAAAAAAAAAA", self.z_local)
+            print(
+                f"[Barra {self.id}] Barra vertical: eje z_local "
+                f"(cross(x_local, eje Y global positivo)): {self.z_local}"
+            )
             # Calcular y_local = normalize(cross(z_local, x_local))
             y_temp = np.cross(self.z_local, self.x_local)
             norma_y = np.linalg.norm(y_temp)
@@ -151,7 +176,9 @@ class Barra:
             
             # Normalizar y_local
             self.y_local = y_temp / norma_y
-            print("y_local BBBBBBBBBBBBBBBBB", self.y_local)
+            print(
+                f"[Barra {self.id}] Barra vertical: eje y_local (tras cross(z_local, x_local)): {self.y_local}"
+            )
 
         
         # 5. Aplicar rotación tita si existe y es significativa (rotación alrededor del eje x_local)
@@ -206,11 +233,9 @@ class Barra:
         np.ndarray
             Matriz de rotación R de 3x3, o matriz identidad si no se puede calcular
         """
-        # Asegurar que se han calculado los ejes locales
-        if self.x_local is None or self.y_local is None or self.z_local is None:
-            # Intentar calcular la terna de ejes locales
-            if not self.calcular_terna_ejes_locales():
-                return np.eye(3)
+        # Asegurar que se han calculado (o recalcular si estan invalidos)
+        if not self.asegurar_terna_ejes_locales():
+            return np.eye(3)
         
         # Extraer cosenos directores
         # x_local → cosalphax, cosalphay, cosalphaz
@@ -230,9 +255,9 @@ class Barra:
         
         # Construir matriz R de 3x3
         R = np.array([
-            [cosalphax, cosbetax, cosgammax],
-            [cosalphay, cosbetay, cosgammay],
-            [cosalphaz, cosbetaz, cosgammaz]
+            [cosalphax, cosalphay, cosalphaz],
+            [cosbetax,  cosbetay,  cosbetaz],
+            [cosgammax, cosgammay, cosgammaz]
         ], dtype=np.float64)
         
         return R
@@ -389,6 +414,7 @@ class Barra:
         
         # Paso 2: Aplicar primera rotación (traspuesta de R_2d_12x12)
         # reaccion_rotada = R_2d_12x12^T @ reaccion_local_total
+        # VER QUE ACÁ YA CAMBIA EL SIGNO PORQUE AHORA YA ES REACCIÓN DE NUDO  (CAMBIAR NOMBRE)
         self.reaccion_de_empotramiento_rotado_eje = -(R_2d_12x12.T @ self.reaccion_de_empotramiento_local_total)
         
         # Paso 3: Construir matriz de rotación T de 12x12
@@ -396,6 +422,7 @@ class Barra:
         
         # Paso 4: Aplicar segunda rotación (traspuesta de T)
         # reaccion_global = T^T @ reaccion_rotada
+        #LO MISMO ACÁ, YA ES DE NUDO PORQUE EN REALIDAD YA HABÍAMOS CAMBIADO EL NOMBRE, (CAMBIAR NOMBRE)
         self.reaccion_de_empotramiento_global = T.T @ self.reaccion_de_empotramiento_rotado_eje
         
         # Paso 5: Separar según nudo

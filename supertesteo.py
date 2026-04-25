@@ -234,27 +234,19 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
             return out
         return arr
 
-    # Reacciones por barra (local / global)
-    datos_reacciones_local = []
-    datos_reacciones_global = []
+    # Cargas nodales equivalentes en global (por barra: nudo i + nudo f)
+    datos_cargas_globales_nudos = []
     for barra in getattr(estructura, 'barras', []):
-        reacc_local = _safe_array(barra, 'reaccion_de_empotramiento_local_total', 12)
-        reacc_global = _safe_array(barra, 'reaccion_de_empotramiento_global', 12)
-        datos_reacciones_local.append({
+        reacc_i_g = _safe_array(barra, 'reaccion_nudo_i_equivalente_global', 6)
+        reacc_f_g = _safe_array(barra, 'reaccion_nudo_f_equivalente_global', 6)
+        cargas_12 = _np.concatenate([reacc_i_g, reacc_f_g])
+        datos_cargas_globales_nudos.append({
             'Barra ID': getattr(barra, 'id', None),
             'Nodo Inicial': getattr(barra, 'nodo_i', None),
             'Nodo Final': getattr(barra, 'nodo_f', None),
-            **{nombres_dofs[i]: float(reacc_local[i]) for i in range(12)}
+            **{nombres_dofs[i]: float(cargas_12[i]) for i in range(12)}
         })
-        datos_reacciones_global.append({
-            'Barra ID': getattr(barra, 'id', None),
-            'Nodo Inicial': getattr(barra, 'nodo_i', None),
-            'Nodo Final': getattr(barra, 'nodo_f', None),
-            **{nombres_dofs[i]: float(reacc_global[i]) for i in range(12)}
-        })
-
-    df_reacciones_local = pd.DataFrame(datos_reacciones_local)
-    df_reacciones_global = pd.DataFrame(datos_reacciones_global)
+    df_cargas_globales_nudos = pd.DataFrame(datos_cargas_globales_nudos)
 
     # Fuerzas internas (F_internas puede tener formato diverso)
     datos_fuerzas_internas = []
@@ -302,51 +294,19 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         })
     df_resumen = pd.DataFrame(datos_resumen)
 
-    # Reacciones por nodo (i / f)
-    datos_reacciones_nodo_i = []
-    datos_reacciones_nodo_f = []
+    # Reacciones locales por barra: nodo i (6) + nodo f (6), una fila por barra
+    datos_reacciones_locales_nodos = []
     for barra in getattr(estructura, 'barras', []):
         reacc_i_local = _safe_array(barra, 'reaccion_de_empotramiento_i_local', 6)
         reacc_f_local = _safe_array(barra, 'reaccion_de_empotramiento_f_local', 6)
-        reacc_i_global = _safe_array(barra, 'reaccion_nudo_i_equivalente_global', 6)
-        reacc_f_global = _safe_array(barra, 'reaccion_nudo_f_equivalente_global', 6)
-
-        datos_reacciones_nodo_i.append({
+        reacc_12 = _np.concatenate([reacc_i_local, reacc_f_local])
+        datos_reacciones_locales_nodos.append({
             'Barra ID': getattr(barra, 'id', None),
-            'Nodo ID': getattr(barra, 'nodo_i', None),
-            'Fx_local': float(reacc_i_local[0]),
-            'Fy_local': float(reacc_i_local[1]),
-            'Fz_local': float(reacc_i_local[2]),
-            'Mx_local': float(reacc_i_local[3]),
-            'My_local': float(reacc_i_local[4]),
-            'Mz_local': float(reacc_i_local[5]),
-            'Fx_global': float(reacc_i_global[0]),
-            'Fy_global': float(reacc_i_global[1]),
-            'Fz_global': float(reacc_i_global[2]),
-            'Mx_global': float(reacc_i_global[3]),
-            'My_global': float(reacc_i_global[4]),
-            'Mz_global': float(reacc_i_global[5]),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            **{nombres_dofs[i]: float(reacc_12[i]) for i in range(12)}
         })
-
-        datos_reacciones_nodo_f.append({
-            'Barra ID': getattr(barra, 'id', None),
-            'Nodo ID': getattr(barra, 'nodo_f', None),
-            'Fx_local': float(reacc_f_local[0]),
-            'Fy_local': float(reacc_f_local[1]),
-            'Fz_local': float(reacc_f_local[2]),
-            'Mx_local': float(reacc_f_local[3]),
-            'My_local': float(reacc_f_local[4]),
-            'Mz_local': float(reacc_f_local[5]),
-            'Fx_global': float(reacc_f_global[0]),
-            'Fy_global': float(reacc_f_global[1]),
-            'Fz_global': float(reacc_f_global[2]),
-            'Mx_global': float(reacc_f_global[3]),
-            'My_global': float(reacc_f_global[4]),
-            'Mz_global': float(reacc_f_global[5]),
-        })
-
-    df_reacciones_nodo_i = pd.DataFrame(datos_reacciones_nodo_i)
-    df_reacciones_nodo_f = pd.DataFrame(datos_reacciones_nodo_f)
+    df_reacciones_locales_nodos = pd.DataFrame(datos_reacciones_locales_nodos)
 
     # f_local y reacciones por carga
     datos_cargas_local = []
@@ -428,31 +388,51 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         })
     df_ejes_locales = pd.DataFrame(datos_ejes_locales)
 
+    # Matriz de rotacion T (12x12) por barra
+    datos_matriz_T = []
+    for barra in getattr(estructura, 'barras', []):
+        try:
+            T = _np.asarray(barra.construir_matriz_rotacion_T_12x12(), dtype=float)
+            if T.shape != (12, 12):
+                T = _np.zeros((12, 12), dtype=float)
+        except Exception:
+            T = _np.zeros((12, 12), dtype=float)
+
+        for fila_idx in range(12):
+            fila = {
+                'Barra ID': getattr(barra, 'id', None),
+                'Nodo Inicial': getattr(barra, 'nodo_i', None),
+                'Nodo Final': getattr(barra, 'nodo_f', None),
+                'Fila': fila_idx + 1
+            }
+            for col_idx in range(12):
+                fila[f'C{col_idx + 1}'] = float(T[fila_idx, col_idx])
+            datos_matriz_T.append(fila)
+    df_matriz_T = pd.DataFrame(datos_matriz_T)
+
     # Escribir Excel
     ruta_excel = _Path(__file__).parent / nombre_archivo
     with pd.ExcelWriter(ruta_excel, engine='openpyxl') as writer:
         df_resumen.to_excel(writer, sheet_name='Resumen_Fuerzas_Internas', index=False)
         df_fuerzas_internas.to_excel(writer, sheet_name='F_Interna_Global', index=False)
-        df_reacciones_local.to_excel(writer, sheet_name='Reacciones_Empot_Local', index=False)
-        df_reacciones_global.to_excel(writer, sheet_name='Reacciones_Empot_Global', index=False)
-        df_reacciones_nodo_i.to_excel(writer, sheet_name='Reacciones_Nodo_Inicial', index=False)
-        df_reacciones_nodo_f.to_excel(writer, sheet_name='Reacciones_Nodo_Final', index=False)
+        df_cargas_globales_nudos.to_excel(writer, sheet_name='Cargas_Globales_en_nudos', index=False)
+        df_reacciones_locales_nodos.to_excel(writer, sheet_name='reacciones_locales_de_empotramiento', index=False)
         df_vector_nodal.to_excel(writer, sheet_name='Vector_Nodal_Equivalente', index=False)
         df_cargas_local.to_excel(writer, sheet_name='f_local_Reacc_i_por_Carga', index=False)
         df_ejes_locales.to_excel(writer, sheet_name='Ejes_Locales', index=False)
+        df_matriz_T.to_excel(writer, sheet_name='Matriz_Rotacion_T', index=False)
 
         # Ajustar anchos
         from openpyxl.utils import get_column_letter
         sheets_map = {
             'Resumen_Fuerzas_Internas': df_resumen,
             'F_Interna_Global': df_fuerzas_internas,
-            'Reacciones_Empot_Local': df_reacciones_local,
-            'Reacciones_Empot_Global': df_reacciones_global,
-            'Reacciones_Nodo_Inicial': df_reacciones_nodo_i,
-            'Reacciones_Nodo_Final': df_reacciones_nodo_f,
+            'Cargas_Globales_en_nudos': df_cargas_globales_nudos,
+            'reacciones_locales_de_empotramiento': df_reacciones_locales_nodos,
             'Vector_Nodal_Equivalente': df_vector_nodal,
             'f_local_Reacc_i_por_Carga': df_cargas_local,
-            'Ejes_Locales': df_ejes_locales
+            'Ejes_Locales': df_ejes_locales,
+            'Matriz_Rotacion_T': df_matriz_T
         }
         for sheet_name, df in sheets_map.items():
             worksheet = writer.sheets.get(sheet_name)
@@ -485,6 +465,16 @@ if __name__ == "__main__":
         print(f"  Barra {barra.id}: Nodo {barra.nodo_i} -> Nodo {barra.nodo_f}, Cargas: {len(barra.cargas)}")
         if barra.L is not None:
             print(f"    Longitud: {barra.L:.2f} cm")
+
+    # Mostrar matriz de rotacion R (3x3) por barra
+    print("\nMatriz de rotacion R (3x3) por barra:")
+    for barra in estructura.barras:
+        try:
+            R = barra.construir_matriz_rotacion_R_3x3()
+            print(f"\n  Barra {barra.id} (Nodo {barra.nodo_i} -> Nodo {barra.nodo_f}):")
+            print(R)
+        except Exception as e:
+            print(f"\n  Barra {barra.id} (Nodo {barra.nodo_i} -> Nodo {barra.nodo_f}): ERROR al calcular R -> {e}")
     
     print(f"\nCargas puntuales:")
     for barra in estructura.barras:
@@ -561,16 +551,16 @@ if __name__ == "__main__":
                 html_file = Path(__file__).parent / "estructura_visualizacion.html"
                 print(f"\nGuardando visualización en archivo HTML...")
                 fig.write_html(str(html_file), include_plotlyjs='cdn')
-                print(f"✓ Visualización guardada en: {html_file}")
+                print(f"[OK] Visualizacion guardada en: {html_file}")
                 
                 # Intentar abrir en el navegador
                 try:
                     import webbrowser
                     print("Abriendo en el navegador...")
                     webbrowser.open(f"file://{html_file.absolute()}")
-                    print("✓ Archivo abierto en el navegador")
+                    print("[OK] Archivo abierto en el navegador")
                 except Exception as e:
-                    print(f"⚠ No se pudo abrir automáticamente: {e}")
+                    print(f"[AVISO] No se pudo abrir automaticamente: {e}")
                     print(f"   Por favor, abre manualmente: {html_file.absolute()}")
                 
                 # También intentar show() como alternativa
@@ -578,7 +568,7 @@ if __name__ == "__main__":
                     print("\nTambién intentando mostrar con Plotly...")
                     fig.show(renderer='browser')
                 except Exception as e:
-                    print(f"⚠ No se pudo mostrar con Plotly directamente: {e}")
+                    print(f"[AVISO] No se pudo mostrar con Plotly directamente: {e}")
                     print(f"   Usa el archivo HTML guardado: {html_file}")
         except Exception as e:
             print(f"\nERROR al generar visualización: {e}")
