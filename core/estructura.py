@@ -147,9 +147,13 @@ class Estructura:
             print("Índices fijos:", idx_fijos)
             print("Índices libres:", idx_libres)
 
-        # 3. Formar el sistema reducido: Kll * Dl = Fl
+        # 3. Formar el sistema reducido: Kll @ Dl = Fl
         Kll = K[np.ix_(idx_libres, idx_libres)]
         Fl = F[idx_libres]
+        # Conservar para inspección / export (p. ej. Excel)
+        self.idx_libres = np.asarray(idx_libres, dtype=np.int64).copy()
+        self.Kll = np.asarray(Kll, dtype=np.float64).copy()
+        self.Fl = np.asarray(Fl, dtype=np.float64).copy()
         if debug:
             print("\n--- Sistema reducido ---")
             print("Kll:\n", Kll)
@@ -208,8 +212,8 @@ class Estructura:
             K_barra = barra.Kglobal()
 
             # Vector de reacciones de empotramiento de barra #RE MAL
-
-            f_reacciones_empotramiento_de_barra = barra.reaccion_de_empotramiento_global.copy()
+            #LE PUSE UN SIGNO MENOS PORQUE LO OTRO ERA PARA OBTENER EL NODAL
+            f_reacciones_empotramiento_de_barra = - (barra.reaccion_de_empotramiento_global.copy())
             
 
             #print(f"vector de empotramiento de barra {barra.id}: {f_reacciones_empotramiento_de_barra}")
@@ -242,7 +246,7 @@ class Estructura:
             coso_rotacion = barra.matriz_A(np.radians(barra.tita or 0.0))
             coso_rotacion_4x3 = barra.bloque_diagonal_4x3(coso_rotacion)
             
-            R_local_temp = coso_rotacion_4x3.T @ R[idx_barra]
+            R_local_temp = coso_rotacion_4x3 @ R[idx_barra]
 
             submatriz_rotacion_xd = barra.calcular_submatriz_de_rotacion()
             submatriz_rotacion_xd_4x3 = barra.bloque_diagonal_4x3(submatriz_rotacion_xd)

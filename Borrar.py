@@ -46,6 +46,7 @@ def update_plot(scale):
 
         # 3. Dibujar la viga deformada
         line = ax.plot(X, Y, deflec, color='black', lw=3, linestyle='--')
+        beam_lines.append(line)
 
         # 4. Dibujar el diagrama de momentos sobre la viga deformada
         Z_top = deflec + m_vals

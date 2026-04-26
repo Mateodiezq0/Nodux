@@ -50,8 +50,8 @@ def crear_estructura_supertesteo():
     
     # Nodo 3: (100, 200, 0)
     nodo3 = Nodo(id=3, x=100.0, y=200.0, z=0.0)
-    # Nodo 3 está restringido solo en el sentido VERTICAL (Y) de cargas, todo lo otro es libre
-    nodo3.restricciones = [False, False, True, False, False, False]  # Solo Y restringido
+    # Nodo 3 está restringido solo en el sentido VERTICAL (Z) de cargas, todo lo otro es libre
+    nodo3.restricciones = [False, False, True, False, False, False]  # Solo Z restringido
     nodo3.valores_prescritos = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     estructura.agregar_nodo(nodo3)
     
@@ -74,12 +74,12 @@ def crear_estructura_supertesteo():
     
     # ========== CREAR BARRAS ==========
     # Propiedades de las barras (valores típicos para pruebas)
-    E = 2100.0  # Tn/cm²
-    A = 100.0   # cm²
-    I_y = 1000.0  # cm⁴
-    I_z = 1000.0  # cm⁴
-    G = 800.0   # Tn/cm²
-    J = 500.0   # cm⁴
+    E = 20000  # kN/cm²
+    A = 100   # cm²
+    I_y = 833  # cm⁴
+    I_z = 833  # cm⁴
+    G = 7720   # Tn/cm²
+    J = 1408   # cm⁴
     
     # Barra 1: del nodo 1 (0,200,0) al nodo 2 (0,200,300)
     barra1 = Barra(
@@ -248,8 +248,8 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         })
     df_cargas_globales_nudos = pd.DataFrame(datos_cargas_globales_nudos)
 
-    # Fuerzas internas (F_internas puede tener formato diverso)
-    datos_fuerzas_internas = []
+    # Salida de `Estructura.calcular_reacciones` (K@D + empotramiento global), por barra
+    datos_reacciones_estructura = []
     for idx, barra in enumerate(getattr(estructura, 'barras', [])):
         if F_internas is None or idx >= len(F_internas):
             F_interna = _np.zeros(12)
@@ -259,40 +259,13 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
                 tmp = _np.zeros(12)
                 tmp[:min(12, F_interna.size)] = F_interna.ravel()[:12]
                 F_interna = tmp
-        datos_fuerzas_internas.append({
+        datos_reacciones_estructura.append({
             'Barra ID': getattr(barra, 'id', None),
             'Nodo Inicial': getattr(barra, 'nodo_i', None),
             'Nodo Final': getattr(barra, 'nodo_f', None),
             **{nombres_dofs[i]: float(F_interna[i]) for i in range(12)}
         })
-    df_fuerzas_internas = pd.DataFrame(datos_fuerzas_internas)
-
-    # Resumen por barra
-    datos_resumen = []
-    for idx, barra in enumerate(getattr(estructura, 'barras', [])):
-        F_interna = _np.zeros(12)
-        if F_internas is not None and idx < len(F_internas):
-            arr = _np.asarray(F_internas[idx])
-            F_interna[:min(12, arr.size)] = arr.ravel()[:12]
-        datos_resumen.append({
-            'Barra ID': getattr(barra, 'id', None),
-            'Nodo Inicial': getattr(barra, 'nodo_i', None),
-            'Nodo Final': getattr(barra, 'nodo_f', None),
-            'Longitud (cm)': getattr(barra, 'L', 0.0) or 0.0,
-            'Fx_i (kN)': float(F_interna[0]),
-            'Fy_i (kN)': float(F_interna[1]),
-            'Fz_i (kN)': float(F_interna[2]),
-            'Mx_i (kN·cm)': float(F_interna[3]),
-            'My_i (kN·cm)': float(F_interna[4]),
-            'Mz_i (kN·cm)': float(F_interna[5]),
-            'Fx_f (kN)': float(F_interna[6]),
-            'Fy_f (kN)': float(F_interna[7]),
-            'Fz_f (kN)': float(F_interna[8]),
-            'Mx_f (kN·cm)': float(F_interna[9]),
-            'My_f (kN·cm)': float(F_interna[10]),
-            'Mz_f (kN·cm)': float(F_interna[11]),
-        })
-    df_resumen = pd.DataFrame(datos_resumen)
+    df_reacciones_estructura_global = pd.DataFrame(datos_reacciones_estructura)
 
     # Reacciones locales por barra: nodo i (6) + nodo f (6), una fila por barra
     datos_reacciones_locales_nodos = []
@@ -308,36 +281,6 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         })
     df_reacciones_locales_nodos = pd.DataFrame(datos_reacciones_locales_nodos)
 
-    # f_local y reacciones por carga
-    datos_cargas_local = []
-    for barra in getattr(estructura, 'barras', []):
-        for carga in getattr(barra, 'cargas', []):
-            f_local = _safe_array(carga, 'f_local', 3)
-            reacc_i = _safe_array(barra, 'reaccion_de_empotramiento_i_local', 6)
-            reacc_f = _safe_array(barra, 'reaccion_de_empotramiento_f_local', 6)
-            datos_cargas_local.append({
-                'Carga ID': getattr(carga, 'id', None),
-                'Barra ID': getattr(barra, 'id', None),
-                'Nodo Inicial': getattr(barra, 'nodo_i', None),
-                'Nodo Final': getattr(barra, 'nodo_f', None),
-                'f_local_x': float(f_local[0]),
-                'f_local_y': float(f_local[1]),
-                'f_local_z': float(f_local[2]),
-                'Reacc_i_Fx_local': float(reacc_i[0]),
-                'Reacc_i_Fy_local': float(reacc_i[1]),
-                'Reacc_i_Fz_local': float(reacc_i[2]),
-                'Reacc_i_Mx_local': float(reacc_i[3]),
-                'Reacc_i_My_local': float(reacc_i[4]),
-                'Reacc_i_Mz_local': float(reacc_i[5]),
-                'Reacc_f_Fx_local': float(reacc_f[0]),
-                'Reacc_f_Fy_local': float(reacc_f[1]),
-                'Reacc_f_Fz_local': float(reacc_f[2]),
-                'Reacc_f_Mx_local': float(reacc_f[3]),
-                'Reacc_f_My_local': float(reacc_f[4]),
-                'Reacc_f_Mz_local': float(reacc_f[5]),
-            })
-    df_cargas_local = pd.DataFrame(datos_cargas_local)
-
     # Vector nodal equivalente
     nombres_dofs_nodo = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     datos_vector_nodal = []
@@ -351,6 +294,56 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
             fila[nombre] = float(vector_nodal[base + i]) if base + i < len(vector_nodal) else 0.0
         datos_vector_nodal.append(fila)
     df_vector_nodal = pd.DataFrame(datos_vector_nodal)
+
+    # Desplazamientos globales D (resultado de resolver_desplazamientos)
+    nombres_desp = ["Ux", "Uy", "Uz", "Rx", "Ry", "Rz"]
+    D_vec = getattr(estructura, 'desplazamientos', None)
+    nodos_list = list(getattr(estructura, 'nodos', []))
+    ndof = max(len(nodos_list) * 6, 0)
+    if D_vec is None:
+        D_vec = _np.zeros(ndof if ndof > 0 else 1)
+    else:
+        D_vec = _np.asarray(D_vec, dtype=float).ravel()
+    if ndof > 0 and D_vec.size < ndof:
+        tmp = _np.zeros(ndof)
+        tmp[: D_vec.size] = D_vec
+        D_vec = tmp
+    datos_desplazamientos = []
+    for nodo in nodos_list:
+        base = (nodo.id - 1) * 6
+        fila = {'Nodo ID': nodo.id}
+        for i, nombre in enumerate(nombres_desp):
+            fila[nombre] = float(D_vec[base + i]) if base + i < len(D_vec) else 0.0
+        datos_desplazamientos.append(fila)
+    df_desplazamientos = pd.DataFrame(datos_desplazamientos)
+
+    # Sistema reducido Kll @ Dl = Fl (misma numeración global de DOF que en resolver_desplazamientos)
+    idx_lib = getattr(estructura, 'idx_libres', None)
+    Kll = getattr(estructura, 'Kll', None)
+    Fl_vec = getattr(estructura, 'Fl', None)
+    datos_sistema_reducido = []
+    if (
+        idx_lib is not None and Kll is not None and Fl_vec is not None
+        and _np.asarray(idx_lib).size > 0
+    ):
+        idx_lib = _np.asarray(idx_lib, dtype=int).ravel()
+        Kll = _np.asarray(Kll, dtype=float)
+        Fl_vec = _np.asarray(Fl_vec, dtype=float).ravel()
+        n = idx_lib.size
+        if Kll.shape == (n, n) and Fl_vec.size == n:
+            for i in range(n):
+                fila = {'DOF_global_fila': int(idx_lib[i])}
+                for j in range(n):
+                    fila[f'K_dof_{int(idx_lib[j])}'] = float(Kll[i, j])
+                fila['Fl'] = float(Fl_vec[i])
+                datos_sistema_reducido.append(fila)
+    if not datos_sistema_reducido:
+        datos_sistema_reducido.append({
+            'DOF_global_fila': None,
+            'nota': 'Sin datos: ejecutar resolver_desplazamientos antes del export o sin DOFs libres',
+            'Fl': None,
+        })
+    df_sistema_reducido = pd.DataFrame(datos_sistema_reducido)
 
     # Terna ejes locales
     datos_ejes_locales = []
@@ -413,24 +406,26 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
     # Escribir Excel
     ruta_excel = _Path(__file__).parent / nombre_archivo
     with pd.ExcelWriter(ruta_excel, engine='openpyxl') as writer:
-        df_resumen.to_excel(writer, sheet_name='Resumen_Fuerzas_Internas', index=False)
-        df_fuerzas_internas.to_excel(writer, sheet_name='F_Interna_Global', index=False)
+        df_reacciones_estructura_global.to_excel(
+            writer, sheet_name='reacciones_de_estructura_Globales', index=False
+        )
+        df_desplazamientos.to_excel(writer, sheet_name='Desplazamientos_globales_D', index=False)
+        df_sistema_reducido.to_excel(writer, sheet_name='Sistema_reducido_Kll_Fl', index=False)
         df_cargas_globales_nudos.to_excel(writer, sheet_name='Cargas_Globales_en_nudos', index=False)
         df_reacciones_locales_nodos.to_excel(writer, sheet_name='reacciones_locales_de_empotramiento', index=False)
         df_vector_nodal.to_excel(writer, sheet_name='Vector_Nodal_Equivalente', index=False)
-        df_cargas_local.to_excel(writer, sheet_name='f_local_Reacc_i_por_Carga', index=False)
         df_ejes_locales.to_excel(writer, sheet_name='Ejes_Locales', index=False)
         df_matriz_T.to_excel(writer, sheet_name='Matriz_Rotacion_T', index=False)
 
         # Ajustar anchos
         from openpyxl.utils import get_column_letter
         sheets_map = {
-            'Resumen_Fuerzas_Internas': df_resumen,
-            'F_Interna_Global': df_fuerzas_internas,
+            'reacciones_de_estructura_Globales': df_reacciones_estructura_global,
+            'Desplazamientos_globales_D': df_desplazamientos,
+            'Sistema_reducido_Kll_Fl': df_sistema_reducido,
             'Cargas_Globales_en_nudos': df_cargas_globales_nudos,
             'reacciones_locales_de_empotramiento': df_reacciones_locales_nodos,
             'Vector_Nodal_Equivalente': df_vector_nodal,
-            'f_local_Reacc_i_por_Carga': df_cargas_local,
             'Ejes_Locales': df_ejes_locales,
             'Matriz_Rotacion_T': df_matriz_T
         }
