@@ -82,10 +82,6 @@ class Estructura:
         return vector_global
     
     def ensamble_matriz_global(self):
-        """
-        Ensambla la matriz global de rigidez K para toda la estructura.
-        Devuelve la matriz K global (n_nodos*6 x n_nodos*6)
-        """
         n_nodos = len(self.nodos)
         dof_por_nodo = 6
         size = n_nodos * dof_por_nodo
@@ -107,12 +103,7 @@ class Estructura:
                 for b in range(12):
                     K_global[dofs[a], dofs[b]] += K_b[a, b]
             
-            #print(K_b)
-            #print()
-
         self.K_global = K_global
-        #print("==========XDXDXD=========")
-        #print(K_global)
         return K_global
 
     def resolver_desplazamientos(self, debug=0):

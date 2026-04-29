@@ -17,6 +17,7 @@ from core.carga_puntual import CargaPuntual, reacciones_de_empotramiento
 try:
     import plotly.graph_objects as go
     from plot.plot import plot_estructura_interactiva
+    from plot.plot import mostrar_dibujos_matplotlib_pestanas
     PLOTLY_AVAILABLE = True
 except ImportError as e:
     PLOTLY_AVAILABLE = False
@@ -535,36 +536,28 @@ if __name__ == "__main__":
                 print(f"  - {len(estructura.barras)} barras")
                 
                 fig = plot_estructura_interactiva(estructura.nodos, estructura.barras, nodos_dict)
-                
-                print("\nAbriendo visualización en el navegador...")
-                print("Instrucciones:")
-                print("- Pasa el mouse sobre barras o nodos para ver sus propiedades")
-                print("- Usa el mouse para rotar, hacer zoom y pan en la vista 3D")
-                print("- Nodos rojos tienen restricciones, nodos verdes son libres")
-                
-                # Guardar HTML directamente (más confiable que show())
+
+                # Guardar HTML por si querés ver la versión Plotly a mano (no se abre el navegador).
                 html_file = Path(__file__).parent / "estructura_visualizacion.html"
-                print(f"\nGuardando visualización en archivo HTML...")
+                print(f"\nGuardando visualización Plotly en HTML (opcional)...")
                 fig.write_html(str(html_file), include_plotlyjs='cdn')
-                print(f"[OK] Visualizacion guardada en: {html_file}")
-                
-                # Intentar abrir en el navegador
+                print(f"[OK] Archivo guardado: {html_file}")
+
+                # Visualización matplotlib: pestañas Dibujo_Estructura + Dibujo_Fuerzas
                 try:
-                    import webbrowser
-                    print("Abriendo en el navegador...")
-                    webbrowser.open(f"file://{html_file.absolute()}")
-                    print("[OK] Archivo abierto en el navegador")
+                    print("\nAbriendo ventana con pestañas (Dibujo_Estructura / Dibujo_Fuerzas)...")
+                    mostrar_dibujos_matplotlib_pestanas(
+                        estructura.nodos,
+                        estructura.barras,
+                        nodos_dict,
+                        cargas_nodales=getattr(estructura, "cargas_nodales", None) or [],
+                        ipn_dims={"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0},
+                        escala_seccion=1.0,
+                        mostrar_ejes_locales=True,
+                        longitud_vector=45.0,
+                    )
                 except Exception as e:
-                    print(f"[AVISO] No se pudo abrir automaticamente: {e}")
-                    print(f"   Por favor, abre manualmente: {html_file.absolute()}")
-                
-                # También intentar show() como alternativa
-                try:
-                    print("\nTambién intentando mostrar con Plotly...")
-                    fig.show(renderer='browser')
-                except Exception as e:
-                    print(f"[AVISO] No se pudo mostrar con Plotly directamente: {e}")
-                    print(f"   Usa el archivo HTML guardado: {html_file}")
+                    print(f"[AVISO] No se pudieron mostrar los dibujos matplotlib: {e}")
         except Exception as e:
             print(f"\nERROR al generar visualización: {e}")
             import traceback
