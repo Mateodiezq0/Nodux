@@ -213,6 +213,11 @@ class Estructura:
             F_interna_sin_empotramiento = K_barra @ D_barra
             F_interna = F_interna_sin_empotramiento + f_reacciones_empotramiento_de_barra
 
+            # Guardar solicitaciones de extremos en la barra (6 del nodo i + 6 del nodo f)
+            barra.solicitaciones_extremos_global = F_interna.copy()
+            barra.solicitaciones_extremo_i_global = F_interna[:6].copy()
+            barra.solicitaciones_extremo_f_global = F_interna[6:].copy()
+
             if debug:
                 print(f"\nBarra {barra.id}:")
                 print("D_barra:", D_barra)
@@ -226,25 +231,6 @@ class Estructura:
         self.reacciones = np.array(lista_solicitaciones)
         return lista_solicitaciones #No es solicitaciones, es reacciones xd
     
-    def calcular_reacciones_locales(self):
-        if not hasattr(self, "reacciones") or self.reacciones is None:
-            self.calcular_reacciones()
-
-        R = self.reacciones
-        R_local = np.zeros((len(self.barras), 12))   # N cantidad de vectores de 3
-        for idx_barra, barra in enumerate(self.barras):
-            
-            coso_rotacion = barra.matriz_A(np.radians(barra.tita or 0.0))
-            coso_rotacion_4x3 = barra.bloque_diagonal_4x3(coso_rotacion)
-            
-            R_local_temp = coso_rotacion_4x3 @ R[idx_barra]
-
-            submatriz_rotacion_xd = barra.calcular_submatriz_de_rotacion()
-            submatriz_rotacion_xd_4x3 = barra.bloque_diagonal_4x3(submatriz_rotacion_xd)
-
-            R_local[idx_barra, :] = submatriz_rotacion_xd_4x3 @ R_local_temp
-
-        return R_local
 
             
 

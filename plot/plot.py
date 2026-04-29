@@ -1158,6 +1158,185 @@ def _dibujo_vectores_fuerza_global(
     return extras
 
 
+def _coord_local_x_sobre_barra(barra: Any, punto_global: np.ndarray) -> float:
+    """
+    Coordenada local x (desde nodo i) de un punto global proyectado sobre la barra.
+    """
+    if hasattr(barra, "asegurar_terna_ejes_locales"):
+        barra.asegurar_terna_ejes_locales()
+    ni = getattr(barra, "nodo_i_obj", None)
+    xl = getattr(barra, "x_local", None)
+    if ni is None or xl is None:
+        return 0.0
+    p_i = np.asarray([float(ni.x), float(ni.y), float(ni.z)], dtype=float)
+    x_local = np.asarray(xl, dtype=float).ravel()[:3]
+    nrm = np.linalg.norm(x_local)
+    if nrm < 1e-12:
+        return 0.0
+    x_local = x_local / nrm
+    return float(np.dot(np.asarray(punto_global, dtype=float) - p_i, x_local))
+
+
+def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
+    """
+    Construye el diagrama escalonado de corte local V_y para una barra.
+    Retorna (x_plot, v_plot, L, V_i, V_f).
+    """
+    if hasattr(barra, "solicitacion_extremo_de_barra_local"):
+        try:
+            barra.solicitacion_extremo_de_barra_local()
+        except Exception:
+            pass
+
+    L = float(getattr(barra, "L", 0.0) or 0.0)
+    if L <= 0.0 and hasattr(barra, "calcular_longitud_y_bases"):
+        try:
+            barra.calcular_longitud_y_bases()
+            L = float(getattr(barra, "L", 0.0) or 0.0)
+        except Exception:
+            L = 0.0
+
+    si = np.asarray(getattr(barra, "solicitaciones_extremo_i_local", np.zeros(6)), dtype=float).ravel()
+    sf = np.asarray(getattr(barra, "solicitaciones_extremo_f_local", np.zeros(6)), dtype=float).ravel()
+    V_i = float(si[1]) if si.size >= 2 else 0.0
+    V_f = float(sf[1]) if sf.size >= 2 else 0.0
+
+    eventos = []
+    for carga in getattr(barra, "cargas", []) or []:
+        f_local = np.asarray(getattr(carga, "f_local", np.zeros(3)), dtype=float).ravel()
+        qy_local = float(f_local[1]) if f_local.size >= 2 else 0.0
+        p = np.asarray(
+            [float(getattr(carga, "x", 0.0)), float(getattr(carga, "y", 0.0)), float(getattr(carga, "z", 0.0))],
+            dtype=float,
+        )
+        x_c = _coord_local_x_sobre_barra(barra, p)
+        if L > 0.0:
+            x_c = max(0.0, min(L, x_c))
+        eventos.append((x_c, qy_local))
+
+    eventos.sort(key=lambda t: t[0])
+
+    x_plot = [0.0]
+    v_plot = [V_i]
+    V_actual = V_i
+
+    for x_c, qy in eventos:
+        x_plot.extend([x_c, x_c])
+        v_plot.extend([V_actual, V_actual + qy])
+        V_actual = V_actual + qy
+
+    x_plot.append(L)
+    v_plot.append(V_actual)
+
+    # Salto final con la solicitación de extremo del nodo final (cierre de equilibrio)
+    x_plot.append(L)
+    v_plot.append(V_actual + V_f)
+
+    return np.asarray(x_plot, dtype=float), np.asarray(v_plot, dtype=float), L, V_i, V_f
+
+
+def dibujo_esfuerzos_corte(
+    nodos: List,
+    barras: List,
+    nodos_dict: Dict,
+    ipn_dims: Optional[Dict[str, float]] = None,
+    escala_seccion: float = 1.0,
+    mostrar_ejes_locales: bool = False,
+    ax=None,
+):
+    """
+    **Esfuerzos de corte** — estructura 3D + diagrama V_y local sobre cada barra.
+    El diagrama se dibuja en el plano local X-Y de cada elemento.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        raise ImportError("matplotlib no está instalado. Ejecuta: pip install matplotlib")
+
+    h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
+
+    created_fig = False
+    if ax is None:
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection="3d")
+        created_fig = True
+
+    all_points = _dibujo_geometria_estructura(
+        ax, nodos, barras, nodos_dict, h, b, tw, tf, mostrar_ejes_locales, leyenda_vinculos=False
+    )
+
+    # Escala grafica de Vy para que se vea sobre la geometria.
+    max_abs_v_global = 0.0
+    Ls = []
+    for barra in barras:
+        x_b, v_b, L, _, _ = _diagrama_corte_vy_local_barra(barra)
+        if x_b.size > 0:
+            max_abs_v_global = max(max_abs_v_global, float(np.max(np.abs(v_b))))
+        if L > 0:
+            Ls.append(float(L))
+    L_ref = float(np.mean(Ls)) if Ls else 100.0
+    escala_v = (0.18 * L_ref / max_abs_v_global) if max_abs_v_global > 1e-12 else 1.0
+
+    for barra in barras:
+        coord_i, coord_f = obtener_coordenadas_barra(barra, nodos_dict)
+        if coord_i is None or coord_f is None:
+            continue
+        if hasattr(barra, "asegurar_terna_ejes_locales"):
+            barra.asegurar_terna_ejes_locales()
+
+        origin = np.asarray(coord_i, dtype=float)
+        x_local = np.asarray(getattr(barra, "x_local", [1.0, 0.0, 0.0]), dtype=float).ravel()[:3]
+        y_local = np.asarray(getattr(barra, "y_local", [0.0, 1.0, 0.0]), dtype=float).ravel()[:3]
+        nx = max(np.linalg.norm(x_local), 1e-12)
+        ny = max(np.linalg.norm(y_local), 1e-12)
+        x_local = x_local / nx
+        y_local = y_local / ny
+
+        x_b, v_b, L, _, _ = _diagrama_corte_vy_local_barra(barra)
+        if x_b.size == 0:
+            continue
+
+        pts = np.array([origin + xb * x_local + (vb * escala_v) * y_local for xb, vb in zip(x_b, v_b)], dtype=float)
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color="#8e44ad", linewidth=2.0)
+
+        # Linea base Vy=0 sobre el eje de la barra
+        base_i = origin
+        base_f = origin + L * x_local
+        ax.plot(
+            [base_i[0], base_f[0]],
+            [base_i[1], base_f[1]],
+            [base_i[2], base_f[2]],
+            color="#8e44ad",
+            linewidth=0.8,
+            linestyle="--",
+            alpha=0.7,
+        )
+
+        # Etiqueta de barra cerca del medio del diagrama
+        pm = origin + 0.5 * L * x_local
+        ax.text(pm[0], pm[1], pm[2], f"Vy B{getattr(barra, 'id', '?')}", fontsize=8, color="#6c3483")
+        all_points.extend([p for p in pts])
+
+    _ajustar_vista_bbox_3d(ax, all_points, "Esfuerzos de corte — V_y local sobre barras")
+
+    if Patch is not None:
+        try:
+            ax.legend(
+                handles=[
+                    Patch(facecolor="#7fb3d5", edgecolor="#1b4f72", linewidth=0.35, label="Estructura"),
+                    Patch(facecolor="#8e44ad", edgecolor="#6c3483", linewidth=0.35, label="Diagrama V_y local"),
+                ],
+                loc="upper right",
+                fontsize=7,
+                framealpha=0.9,
+            )
+        except Exception:
+            pass
+
+    if created_fig:
+        _tight_layout_o_margenes_3d(fig)
+        return fig, ax
+    return None, ax
+
+
 def dibujo_estructura(
     nodos: List,
     barras: List,
@@ -1309,10 +1488,11 @@ def mostrar_dibujos_matplotlib_pestanas(
     escala_seccion: float = 1.0,
     mostrar_ejes_locales: bool = True,
     longitud_vector: float = 45.0,
-    titulo_app: str = "Dibujos — Dibujo_Estructura y Dibujo_Fuerzas",
+    titulo_app: str = "Dibujos — Dibujo_Estructura, Dibujo_Fuerzas y Esfuerzos de corte",
 ):
     """
-    Una sola ventana con pestañas: **Dibujo_Estructura** y **Dibujo_Fuerzas** (Tkinter + matplotlib).
+    Una sola ventana con pestañas: **Dibujo_Estructura**, **Dibujo_Fuerzas** y
+    **Esfuerzos de corte** (Tkinter + matplotlib).
 
     Si Tkinter o el backend embebido no están disponibles, cae a dos ventanas
     ``plt.show()`` seguidas.
@@ -1355,6 +1535,16 @@ def mostrar_dibujos_matplotlib_pestanas(
         )
         if fig_b is not None:
             plt.show()
+        fig_c, _ = dibujo_esfuerzos_corte(
+            nodos,
+            barras,
+            nodos_dict,
+            ipn_dims=ipn_dims,
+            escala_seccion=escala_seccion,
+            mostrar_ejes_locales=mostrar_ejes_locales,
+        )
+        if fig_c is not None:
+            plt.show()
         return
 
     root = tk.Tk()
@@ -1364,13 +1554,19 @@ def mostrar_dibujos_matplotlib_pestanas(
     nb = ttk.Notebook(root)
     nb.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=(4, 0))
 
-    def _embed_pestana(title: str, dibujar_en_ax: Callable[[Any], None]) -> None:
+    def _embed_pestana(title: str, dibujar_en_ax: Callable[[Any], None], es_3d: bool = True) -> None:
         tab = ttk.Frame(nb)
         nb.add(tab, text=title)
         fig = Figure(figsize=(10, 7), dpi=100)
-        ax = fig.add_subplot(111, projection="3d")
+        ax = fig.add_subplot(111, projection="3d") if es_3d else fig.add_subplot(111)
         dibujar_en_ax(ax)
-        _tight_layout_o_margenes_3d(fig)
+        if es_3d:
+            _tight_layout_o_margenes_3d(fig)
+        else:
+            try:
+                fig.tight_layout()
+            except Exception:
+                pass
         canvas = FigureCanvasTkAgg(fig, master=tab)
         try:
             canvas.draw()
@@ -1381,7 +1577,8 @@ def mostrar_dibujos_matplotlib_pestanas(
             if leg is not None:
                 leg.remove()
             canvas.draw()
-        _ocultar_ticklabels_mpl3d_borde(ax)
+        if es_3d:
+            _ocultar_ticklabels_mpl3d_borde(ax)
         try:
             canvas.draw_idle()
         except Exception:
@@ -1420,8 +1617,20 @@ def mostrar_dibujos_matplotlib_pestanas(
             ax=ax,
         )
 
+    def _pest_corte(ax):
+        dibujo_esfuerzos_corte(
+            nodos,
+            barras,
+            nodos_dict,
+            ipn_dims=ipn_dims,
+            escala_seccion=escala_seccion,
+            mostrar_ejes_locales=mostrar_ejes_locales,
+            ax=ax,
+        )
+
     _embed_pestana("Dibujo_Estructura", _pest_estructura)
     _embed_pestana("Dibujo_Fuerzas", _pest_fuerzas)
+    _embed_pestana("Esfuerzos de corte", _pest_corte, es_3d=True)
 
     root.mainloop()
 

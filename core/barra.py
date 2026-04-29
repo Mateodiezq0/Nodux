@@ -39,6 +39,12 @@ class Barra:
     reaccion_de_empotramiento_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(12))           #Reaccion total de las barras GLOBAL
     reaccion_nudo_i_equivalente_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))          #Reaccion equivalente de nodo inicial GLOBAL
     reaccion_nudo_f_equivalente_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))          #Reaccion equivalente de nodo final GLOBAL
+    solicitaciones_extremos_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(12))             #Solicitaciones internas de barra [nodo_i(6), nodo_f(6)] en GLOBAL
+    solicitaciones_extremo_i_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))             #Solicitaciones internas en extremo nodo inicial (GLOBAL)
+    solicitaciones_extremo_f_global: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))             #Solicitaciones internas en extremo nodo final (GLOBAL)
+    solicitaciones_extremos_local: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(12))              #Solicitaciones internas de barra [nodo_i(6), nodo_f(6)] en LOCAL
+    solicitaciones_extremo_i_local: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))              #Solicitaciones internas en extremo nodo inicial (LOCAL)
+    solicitaciones_extremo_f_local: Optional[np.ndarray] = field(default_factory=lambda: np.zeros(6))              #Solicitaciones internas en extremo nodo final (LOCAL)
     
     k_global_dat : Optional[np.ndarray] = None  # Matriz de rigidez global (12x12)
 
@@ -495,7 +501,7 @@ class Barra:
         
         GJ_L = (self.G * self.J / self.L) if (self.G is not None and self.J is not None) else 0.0
         
-        # Fuerza axial (DOF 0 y 6)
+        # Fuerza axial (DOF 0 y 6)S
         K[0, 0] = EA_L
         K[0, 6] = -EA_L
         K[6, 0] = -EA_L
@@ -557,5 +563,50 @@ class Barra:
         Actualiza las reacciones de empotramiento transformándolas a coordenadas globales.
         """
         self.transformar_reacciones_empotramiento_a_global()
+    
+    def solicitacion_extremo_de_barra_local(self) -> np.ndarray:
+        """
+        Convierte las solicitaciones de extremo de barra desde GLOBAL a LOCAL.
+        
+        Se aplica la rotación en dos pasos, en este orden:
+        1) Vector intermedio = R @ F_global
+        2) Vector local      = T @ vector_intermedio
+        
+        Donde:
+        - R es la matriz de rotación de 12x12 para el giro en el plano y-z.
+        - T es la matriz de rotación de 12x12 basada en los cosenos directores.
+        
+        Retorna:
+        --------
+        np.ndarray
+            Vector de 12 componentes con solicitaciones de extremos en coordenadas locales.
+        """
+        if self.solicitaciones_extremos_global is None:
+            raise ValueError(
+                f"Barra {self.id}: no hay solicitaciones globales. "
+                "Primero ejecutá calcular_reacciones() en la estructura."
+            )
+        
+        F_global = np.asarray(self.solicitaciones_extremos_global, dtype=np.float64).ravel()
+        if F_global.size != 12:
+            raise ValueError(
+                f"Barra {self.id}: solicitaciones_extremos_global debe tener 12 componentes, "
+                f"pero tiene {F_global.size}."
+            )
+        
+        # Paso 1: rotación en el plano y-z (matriz R de 12x12)
+        R = self.construir_matriz_rotacion_2d_12x12()
+        F_rotado = R @ F_global
+        
+        # Paso 2: rotación con cosenos directores (matriz T de 12x12)
+        T = self.construir_matriz_rotacion_T_12x12()
+        F_local = T @ F_rotado
+        
+        # Guardar resultados locales completos y por extremo (6 + 6)
+        self.solicitaciones_extremos_local = F_local.copy()
+        self.solicitaciones_extremo_i_local = F_local[:6].copy()
+        self.solicitaciones_extremo_f_local = F_local[6:].copy()
+        
+        return self.solicitaciones_extremos_local.copy()
     
      

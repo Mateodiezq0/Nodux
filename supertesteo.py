@@ -267,6 +267,24 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
             **{nombres_dofs[i]: float(F_interna[i]) for i in range(12)}
         })
     df_reacciones_estructura_global = pd.DataFrame(datos_reacciones_estructura)
+    # F interna locales por barra (mismo formato 12 DOFs)
+    datos_f_interna_locales = []
+    for barra in getattr(estructura, 'barras', []):
+        # Si existe el metodo, recalcula/actualiza a local desde el vector global guardado
+        if hasattr(barra, 'solicitacion_extremo_de_barra_local'):
+            try:
+                barra.solicitacion_extremo_de_barra_local()
+            except Exception:
+                pass
+
+        F_local = _safe_array(barra, 'solicitaciones_extremos_local', 12)
+        datos_f_interna_locales.append({
+            'Barra ID': getattr(barra, 'id', None),
+            'Nodo Inicial': getattr(barra, 'nodo_i', None),
+            'Nodo Final': getattr(barra, 'nodo_f', None),
+            **{nombres_dofs[i]: float(F_local[i]) for i in range(12)}
+        })
+    df_f_interna_locales = pd.DataFrame(datos_f_interna_locales)
 
     # Reacciones locales por barra: nodo i (6) + nodo f (6), una fila por barra
     datos_reacciones_locales_nodos = []
@@ -410,6 +428,9 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         df_reacciones_estructura_global.to_excel(
             writer, sheet_name='reacciones_de_estructura_Globales', index=False
         )
+        df_f_interna_locales.to_excel(
+            writer, sheet_name='F_interna_Locales', index=False
+        )
         df_desplazamientos.to_excel(writer, sheet_name='Desplazamientos_globales_D', index=False)
         df_sistema_reducido.to_excel(writer, sheet_name='Sistema_reducido_Kll_Fl', index=False)
         df_cargas_globales_nudos.to_excel(writer, sheet_name='Cargas_Globales_en_nudos', index=False)
@@ -422,6 +443,7 @@ def exportar_resultados_excel(estructura, F_internas, nombre_archivo):
         from openpyxl.utils import get_column_letter
         sheets_map = {
             'reacciones_de_estructura_Globales': df_reacciones_estructura_global,
+            'F_interna_Locales': df_f_interna_locales,
             'Desplazamientos_globales_D': df_desplazamientos,
             'Sistema_reducido_Kll_Fl': df_sistema_reducido,
             'Cargas_Globales_en_nudos': df_cargas_globales_nudos,
@@ -545,7 +567,7 @@ if __name__ == "__main__":
 
                 # Visualización matplotlib: pestañas Dibujo_Estructura + Dibujo_Fuerzas
                 try:
-                    print("\nAbriendo ventana con pestañas (Dibujo_Estructura / Dibujo_Fuerzas)...")
+                    print("\nAbriendo ventana con pestañas (Dibujo_Estructura / Dibujo_Fuerzas / Esfuerzos de corte)...")
                     mostrar_dibujos_matplotlib_pestanas(
                         estructura.nodos,
                         estructura.barras,
