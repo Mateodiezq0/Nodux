@@ -567,7 +567,7 @@ if __name__ == "__main__":
 
                 # Visualización matplotlib: pestañas Dibujo_Estructura + Dibujo_Fuerzas
                 try:
-                    print("\nAbriendo ventana con pestañas (Estructura / Fuerzas / V_y / V_z / N_x)...")
+                    print("\nAbriendo ventana con pestañas (Estructura / Fuerzas / V_y / V_z / N_x / M_y)...")
                     mostrar_dibujos_matplotlib_pestanas(
                         estructura.nodos,
                         estructura.barras,
