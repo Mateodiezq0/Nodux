@@ -1235,6 +1235,51 @@ def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
     return np.asarray(x_plot, dtype=float), np.asarray(v_plot, dtype=float), L, V_i, V_f
 
 
+def _rellenar_franjas_diagrama_vy_3d(
+    ax,
+    origin: np.ndarray,
+    x_local: np.ndarray,
+    y_local: np.ndarray,
+    x_b: np.ndarray,
+    v_b: np.ndarray,
+    escala_v: float,
+    color_cara: str = "#8e44ad",
+    alpha: float = 0.42,
+) -> List[np.ndarray]:
+    """
+    Rellena con cuadriláteros el área entre la línea base (V=0) y el diagrama
+    en cada tramo horizontal (corte constante).
+    """
+    extras: List[np.ndarray] = []
+    if x_b.size < 2:
+        return extras
+    caras = []
+    for k in range(len(x_b) - 1):
+        xa, xb = float(x_b[k]), float(x_b[k + 1])
+        va, vb = float(v_b[k]), float(v_b[k + 1])
+        if abs(xb - xa) < 1e-12:
+            continue
+        if not np.isclose(va, vb, rtol=1e-9, atol=1e-12 * max(1.0, abs(va), abs(vb))):
+            continue
+        base_a = origin + xa * x_local
+        base_b = origin + xb * x_local
+        top_a = origin + xa * x_local + va * escala_v * y_local
+        top_b = origin + xb * x_local + vb * escala_v * y_local
+        quad = [base_a, base_b, top_b, top_a]
+        caras.append(quad)
+        extras.extend(quad)
+    if caras:
+        poly = Poly3DCollection(
+            caras,
+            facecolors=color_cara,
+            edgecolors=color_cara,
+            linewidths=0.35,
+            alpha=alpha,
+        )
+        ax.add_collection3d(poly)
+    return extras
+
+
 def dibujo_esfuerzos_corte(
     nodos: List,
     barras: List,
@@ -1242,11 +1287,18 @@ def dibujo_esfuerzos_corte(
     ipn_dims: Optional[Dict[str, float]] = None,
     escala_seccion: float = 1.0,
     mostrar_ejes_locales: bool = False,
+    escala_diagrama_corte: float = 1.0,
     ax=None,
 ):
     """
     **Esfuerzos de corte** — estructura 3D + diagrama V_y local sobre cada barra.
     El diagrama se dibuja en el plano local X-Y de cada elemento.
+
+    Parameters
+    ----------
+    escala_diagrama_corte : float
+        Factor multiplicativo sobre la escala gráfica del diagrama (ampliar > 1,
+        achicar < 1). No altera los valores físicos, solo el dibujo.
     """
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("matplotlib no está instalado. Ejecuta: pip install matplotlib")
@@ -1273,7 +1325,8 @@ def dibujo_esfuerzos_corte(
         if L > 0:
             Ls.append(float(L))
     L_ref = float(np.mean(Ls)) if Ls else 100.0
-    escala_v = (0.18 * L_ref / max_abs_v_global) if max_abs_v_global > 1e-12 else 1.0
+    escala_base = (0.18 * L_ref / max_abs_v_global) if max_abs_v_global > 1e-12 else 1.0
+    escala_v = escala_base * float(escala_diagrama_corte)
 
     for barra in barras:
         coord_i, coord_f = obtener_coordenadas_barra(barra, nodos_dict)
@@ -1294,8 +1347,13 @@ def dibujo_esfuerzos_corte(
         if x_b.size == 0:
             continue
 
+        extras_fill = _rellenar_franjas_diagrama_vy_3d(
+            ax, origin, x_local, y_local, x_b, v_b, escala_v
+        )
+        all_points.extend(extras_fill)
+
         pts = np.array([origin + xb * x_local + (vb * escala_v) * y_local for xb, vb in zip(x_b, v_b)], dtype=float)
-        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color="#8e44ad", linewidth=2.0)
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color="#5b2c6f", linewidth=2.0)
 
         # Linea base Vy=0 sobre el eje de la barra
         base_i = origin
@@ -1322,7 +1380,12 @@ def dibujo_esfuerzos_corte(
             ax.legend(
                 handles=[
                     Patch(facecolor="#7fb3d5", edgecolor="#1b4f72", linewidth=0.35, label="Estructura"),
-                    Patch(facecolor="#8e44ad", edgecolor="#6c3483", linewidth=0.35, label="Diagrama V_y local"),
+                    Patch(
+                        facecolor="#8e44ad",
+                        edgecolor="#6c3483",
+                        linewidth=0.35,
+                        label="V_y local (relleno + contorno; usa escala)",
+                    ),
                 ],
                 loc="upper right",
                 fontsize=7,
@@ -1488,6 +1551,7 @@ def mostrar_dibujos_matplotlib_pestanas(
     escala_seccion: float = 1.0,
     mostrar_ejes_locales: bool = True,
     longitud_vector: float = 45.0,
+    escala_diagrama_corte: float = 1.0,
     titulo_app: str = "Dibujos — Dibujo_Estructura, Dibujo_Fuerzas y Esfuerzos de corte",
 ):
     """
@@ -1542,6 +1606,7 @@ def mostrar_dibujos_matplotlib_pestanas(
             ipn_dims=ipn_dims,
             escala_seccion=escala_seccion,
             mostrar_ejes_locales=mostrar_ejes_locales,
+            escala_diagrama_corte=escala_diagrama_corte,
         )
         if fig_c is not None:
             plt.show()
@@ -1617,7 +1682,20 @@ def mostrar_dibujos_matplotlib_pestanas(
             ax=ax,
         )
 
-    def _pest_corte(ax):
+    _embed_pestana("Dibujo_Estructura", _pest_estructura)
+    _embed_pestana("Dibujo_Fuerzas", _pest_fuerzas)
+
+    # Pestaña Esfuerzos de corte: escala del diagrama Vy ajustable con slider
+    tab_corte = ttk.Frame(nb)
+    nb.add(tab_corte, text="Esfuerzos de corte")
+    fig_corte = Figure(figsize=(10, 7), dpi=100)
+    ax_corte = fig_corte.add_subplot(111, projection="3d")
+    canvas_corte = FigureCanvasTkAgg(fig_corte, master=tab_corte)
+
+    escala_vy_var = tk.DoubleVar(value=float(escala_diagrama_corte))
+
+    def _redraw_corte():
+        ax_corte.clear()
         dibujo_esfuerzos_corte(
             nodos,
             barras,
@@ -1625,12 +1703,57 @@ def mostrar_dibujos_matplotlib_pestanas(
             ipn_dims=ipn_dims,
             escala_seccion=escala_seccion,
             mostrar_ejes_locales=mostrar_ejes_locales,
-            ax=ax,
+            escala_diagrama_corte=float(escala_vy_var.get()),
+            ax=ax_corte,
         )
+        _tight_layout_o_margenes_3d(fig_corte)
+        _ocultar_ticklabels_mpl3d_borde(ax_corte)
+        canvas_corte.draw_idle()
 
-    _embed_pestana("Dibujo_Estructura", _pest_estructura)
-    _embed_pestana("Dibujo_Fuerzas", _pest_fuerzas)
-    _embed_pestana("Esfuerzos de corte", _pest_corte, es_3d=True)
+    ctrl_corte = ttk.Frame(tab_corte)
+    ctrl_corte.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
+    ttk.Label(ctrl_corte, text="Escala diagrama Vy:").pack(side=tk.LEFT, padx=(0, 8))
+    lbl_escala_vy = ttk.Label(ctrl_corte, width=6)
+
+    def _actualizar_etiqueta_escala(_arg=None):
+        lbl_escala_vy.config(text=f"{float(escala_vy_var.get()):.2f}")
+
+    scale_corte = ttk.Scale(
+        ctrl_corte,
+        from_=0.2,
+        to=10.0,
+        orient=tk.HORIZONTAL,
+        variable=escala_vy_var,
+        command=lambda _v: _actualizar_etiqueta_escala(),
+    )
+    scale_corte.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+    lbl_escala_vy.pack(side=tk.RIGHT)
+
+    def _redraw_corte_al_soltar(_evt=None):
+        _redraw_corte()
+        _actualizar_etiqueta_escala()
+
+    scale_corte.bind("<ButtonRelease-1>", _redraw_corte_al_soltar)
+
+    canvas_corte.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    bar_corte = ttk.Frame(tab_corte)
+    bar_corte.pack(side=tk.BOTTOM, fill=tk.X)
+    try:
+        NavigationToolbar2Tk(canvas_corte, bar_corte)
+    except Exception:
+        pass
+
+    _redraw_corte()
+    _actualizar_etiqueta_escala()
+    try:
+        canvas_corte.draw()
+    except Exception as err:
+        if "bboxes" not in str(err).lower():
+            raise
+        leg = ax_corte.get_legend()
+        if leg is not None:
+            leg.remove()
+        canvas_corte.draw()
 
     root.mainloop()
 

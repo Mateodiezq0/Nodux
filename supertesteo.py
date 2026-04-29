@@ -577,6 +577,7 @@ if __name__ == "__main__":
                         escala_seccion=1.0,
                         mostrar_ejes_locales=True,
                         longitud_vector=45.0,
+                        escala_diagrama_corte=1.0,
                     )
                 except Exception as e:
                     print(f"[AVISO] No se pudieron mostrar los dibujos matplotlib: {e}")
