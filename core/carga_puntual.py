@@ -42,6 +42,8 @@ class CargaPuntual:
         self.F_y = F_y  # Fuerza en Y
         self.F_z = F_z  # Fuerza en Z
         self.f_local = np.zeros(3)  # Fuerza en coordenadas locales de la barra
+        # Momento torsor puntual local M_x (sobre el eje de barra); 0 si no hay.
+        self.mx_local = 0.0
 
 
 def reacciones_de_empotramiento(self, barra):
