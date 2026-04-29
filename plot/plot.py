@@ -1690,7 +1690,7 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
     ax,
     origin: np.ndarray,
     x_local: np.ndarray,
-    z_local: np.ndarray,
+    dir_local: np.ndarray,
     xa: float,
     xb: float,
     Ma: float,
@@ -1700,10 +1700,14 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
     color_neg: str = _DIAG_COLOR_NEG,
     color_zero: str = _DIAG_COLOR_ZERO,
     alpha: float = 0.42,
+    sign_draw: float = -1.0,
 ) -> List[np.ndarray]:
     """
-    Área entre la fibra de referencia y el diagrama lineal M_y en el plano X–Z local.
-    Convención gráfica: M_y > 0 (tracción abajo) se dibuja según ``−M_y · z_local``.
+    Área entre la fibra de referencia y el diagrama lineal de momento en un plano local.
+
+    ``top = base + sign_draw * M * escala_m * dir_local`` (``dir_local`` unitario).
+    M_y (plano X–Z): ``sign_draw=-1``, ``dir_local=z_local`` → ``+M_y`` hacia ``−z``.
+    M_z (plano X–Y): ``sign_draw=+1``, ``dir_local=y_local`` → ``+M_z`` hacia ``+y``.
     """
     extras: List[np.ndarray] = []
     if abs(xb - xa) < 1e-12:
@@ -1729,7 +1733,7 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
                 ax,
                 origin,
                 x_local,
-                z_local,
+                dir_local,
                 xa,
                 xm,
                 Ma,
@@ -1739,6 +1743,7 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
                 color_neg=color_neg,
                 color_zero=color_zero,
                 alpha=alpha,
+                sign_draw=sign_draw,
             )
         )
         extras.extend(
@@ -1746,7 +1751,7 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
                 ax,
                 origin,
                 x_local,
-                z_local,
+                dir_local,
                 xm,
                 xb,
                 0.0,
@@ -1756,6 +1761,7 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
                 color_neg=color_neg,
                 color_zero=color_zero,
                 alpha=alpha,
+                sign_draw=sign_draw,
             )
         )
         return extras
@@ -1770,8 +1776,8 @@ def _rellenar_franjas_diagrama_momento_lineal_3d(
 
     base_a = origin + xa * x_local
     base_b = origin + xb * x_local
-    top_a = base_a - Ma * escala_m * z_local
-    top_b = base_b - Mb * escala_m * z_local
+    top_a = base_a + sign_draw * Ma * escala_m * dir_local
+    top_b = base_b + sign_draw * Mb * escala_m * dir_local
     quad = [base_a, base_b, top_b, top_a]
     extras.extend(quad)
     poly = Poly3DCollection(
@@ -1971,6 +1977,241 @@ def dibujo_momento_my_flexion(
     return None, ax
 
 
+def _diagrama_momento_mz_local_barra(barra: Any) -> tuple:
+    """
+    Momento flector local M_z (índice 5 en [Fx,Fy,Fz,Mx,My,Mz]) a lo largo de la barra.
+
+    Los cortantes ``V_y`` vienen del mismo diagrama escalonado que ``dibujo_esfuerzos_corte``
+    (``solicitaciones_extremo_*`` + saltos ``f_local[1]``). Con esa convención de vectores
+    locales del modelo, la pendiente del momento cumple **``dM_z/dx = -V_y``**, es decir
+
+    ``M_z(x) = M_{z,i} - \\int_0^x V_y(s)\\,ds``.
+
+    Eso alinea el signo del diagrama con equilibrio tipo ``M_{z,i} + V_y\\,x_1 - Q_y\\,x_2``
+    (salto de cortante por la carga puntual con el signo de ``f_local[1]``).
+    """
+    if hasattr(barra, "solicitacion_extremo_de_barra_local"):
+        try:
+            barra.solicitacion_extremo_de_barra_local()
+        except Exception:
+            pass
+
+    si = np.asarray(getattr(barra, "solicitaciones_extremo_i_local", np.zeros(6)), dtype=float).ravel()
+    Mz_i = float(si[5]) if si.size > 5 else 0.0
+
+    x_b, v_b, L, _, _ = _diagrama_corte_local_barra(barra, 1)
+    if x_b.size == 0:
+        return np.array([0.0]), np.array([Mz_i]), float(getattr(barra, "L", 0.0) or 0.0)
+
+    xs: List[float] = [float(x_b[0])]
+    ms: List[float] = [Mz_i]
+    M_cur = Mz_i
+    i = 0
+    n = len(x_b)
+    while i < n - 1:
+        xa = float(x_b[i])
+        xb = float(x_b[i + 1])
+        if abs(xb - xa) < 1e-12:
+            i += 1
+            continue
+        va = float(v_b[i])
+        M_cur = M_cur - va * (xb - xa)
+        xs.append(xb)
+        ms.append(M_cur)
+        i += 1
+
+    return np.asarray(xs, dtype=float), np.asarray(ms, dtype=float), float(L)
+
+
+def dibujo_momento_mz_flexion(
+    nodos: List,
+    barras: List,
+    nodos_dict: Dict,
+    ipn_dims: Optional[Dict[str, float]] = None,
+    escala_seccion: float = 1.0,
+    mostrar_ejes_locales: bool = False,
+    escala_diagrama_momento: float = 1.0,
+    ax=None,
+):
+    """
+    **Momento flector M_z** local: diagrama en el plano **X–Y** de cada barra.
+
+    - Valor físico M_z del vector local (tracción **arriba** si M_z > 0 en tu convención).
+    - **Dirección gráfica:** M_z > 0 se dibuja según **+y_local** (mismo sentido que Y positivo).
+    - ``M_z(x) = M_{z,i} - \\int V_y`` (ver ``_diagrama_momento_mz_local_barra``): mismo escalón
+      de ``V_y`` que el diagrama de corte, con **menos** integral para coincidir con
+      ``dM_z/dx = -V_y`` en la convención de tus solicitaciones locales.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        raise ImportError("matplotlib no está instalado. Ejecuta: pip install matplotlib")
+
+    h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
+
+    created_fig = False
+    if ax is None:
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection="3d")
+        created_fig = True
+
+    all_points = _dibujo_geometria_estructura(
+        ax, nodos, barras, nodos_dict, h, b, tw, tf, mostrar_ejes_locales, leyenda_vinculos=False
+    )
+
+    ax._shear_hover_points = []  # type: ignore[attr-defined]
+
+    max_abs_m = 0.0
+    Ls = []
+    for barra in barras:
+        xs, ms, L = _diagrama_momento_mz_local_barra(barra)
+        if xs.size > 0:
+            max_abs_m = max(max_abs_m, float(np.max(np.abs(ms))))
+        if L > 0:
+            Ls.append(float(L))
+    L_ref = float(np.mean(Ls)) if Ls else 100.0
+    escala_base = (0.18 * L_ref / max_abs_m) if max_abs_m > 1e-12 else 1.0
+    escala_m = escala_base * float(escala_diagrama_momento)
+
+    color_pos = _DIAG_COLOR_POS
+    color_neg = _DIAG_COLOR_NEG
+    color_zero = _DIAG_COLOR_ZERO
+    color_base = "#7f8c8d"
+    titulo_ax = "Momento M_z local — plano X–Y (+M_z → +y_local; verde + / rojo −)"
+
+    for barra in barras:
+        coord_i, coord_f = obtener_coordenadas_barra(barra, nodos_dict)
+        if coord_i is None or coord_f is None:
+            continue
+        if hasattr(barra, "asegurar_terna_ejes_locales"):
+            barra.asegurar_terna_ejes_locales()
+
+        origin = np.asarray(coord_i, dtype=float)
+        x_local = np.asarray(getattr(barra, "x_local", [1.0, 0.0, 0.0]), dtype=float).ravel()[:3]
+        y_local = np.asarray(getattr(barra, "y_local", [0.0, 1.0, 0.0]), dtype=float).ravel()[:3]
+        nrm_x = max(np.linalg.norm(x_local), 1e-12)
+        nrm_y = max(np.linalg.norm(y_local), 1e-12)
+        x_local = x_local / nrm_x
+        y_local = y_local / nrm_y
+
+        xs, ms, L = _diagrama_momento_mz_local_barra(barra)
+        if xs.size == 0:
+            continue
+
+        for k in range(xs.size - 1):
+            xa, xb = float(xs[k]), float(xs[k + 1])
+            Ma, Mb = float(ms[k]), float(ms[k + 1])
+            extras_q = _rellenar_franjas_diagrama_momento_lineal_3d(
+                ax,
+                origin,
+                x_local,
+                y_local,
+                xa,
+                xb,
+                Ma,
+                Mb,
+                escala_m,
+                color_pos=color_pos,
+                color_neg=color_neg,
+                color_zero=color_zero,
+                sign_draw=1.0,
+            )
+            all_points.extend(extras_q)
+
+        px, pm = _momento_polyline_con_cruces_cero(xs, ms)
+        pts = np.array(
+            [origin + xv * x_local + mv * escala_m * y_local for xv, mv in zip(px, pm)],
+            dtype=float,
+        )
+        _plot_polilinea_diagrama_coloreada(
+            ax, pts, pm, color_pos=color_pos, color_neg=color_neg, color_zero=color_zero, lw=2.0
+        )
+
+        def _append_hover(x_loc: float, M_val: float, pt_xyz: np.ndarray) -> None:
+            ax._shear_hover_points.append(  # type: ignore[attr-defined]
+                {
+                    "bar_id": getattr(barra, "id", None),
+                    "x_local": float(x_loc),
+                    "v": float(M_val),
+                    "corte": "mz",
+                    "pos": (float(pt_xyz[0]), float(pt_xyz[1]), float(pt_xyz[2])),
+                }
+            )
+
+        for k in range(px.size):
+            _append_hover(float(px[k]), float(pm[k]), pts[k])
+
+        for k in range(xs.size - 1):
+            xa, xb = float(xs[k]), float(xs[k + 1])
+            Ma, Mb = float(ms[k]), float(ms[k + 1])
+            if abs(xb - xa) < 1e-12:
+                continue
+            for t in (0.25, 0.5, 0.75):
+                xm = xa + t * (xb - xa)
+                Mm = Ma + t * (Mb - Ma)
+                pt = origin + xm * x_local + Mm * escala_m * y_local
+                _append_hover(xm, Mm, pt)
+
+        base_i = origin
+        base_f = origin + L * x_local
+        ax.plot(
+            [base_i[0], base_f[0]],
+            [base_i[1], base_f[1]],
+            [base_i[2], base_f[2]],
+            color=color_base,
+            linewidth=0.8,
+            linestyle="--",
+            alpha=0.7,
+        )
+
+        pmid = origin + 0.5 * L * x_local
+        ax.text(
+            pmid[0],
+            pmid[1],
+            pmid[2],
+            f"Mz B{getattr(barra, 'id', '?')}",
+            fontsize=8,
+            color="#2c3e50",
+        )
+        all_points.extend([p for p in pts])
+
+    _ajustar_vista_bbox_3d(ax, all_points, titulo_ax)
+
+    if Patch is not None:
+        try:
+            ax.legend(
+                handles=[
+                    Patch(facecolor="#7fb3d5", edgecolor="#1b4f72", linewidth=0.35, label="Estructura"),
+                    Patch(
+                        facecolor=color_pos,
+                        edgecolor=color_pos,
+                        linewidth=0.35,
+                        label="M_z > 0",
+                    ),
+                    Patch(
+                        facecolor=color_neg,
+                        edgecolor=color_neg,
+                        linewidth=0.35,
+                        label="M_z < 0",
+                    ),
+                    Patch(
+                        facecolor=color_zero,
+                        edgecolor=color_zero,
+                        linewidth=0.35,
+                        label="M_z ~ 0",
+                    ),
+                ],
+                loc="upper right",
+                fontsize=7,
+                framealpha=0.9,
+            )
+        except Exception:
+            pass
+
+    if created_fig:
+        _tight_layout_o_margenes_3d(fig)
+        return fig, ax
+    return None, ax
+
+
 def dibujo_estructura(
     nodos: List,
     barras: List,
@@ -2123,11 +2364,11 @@ def mostrar_dibujos_matplotlib_pestanas(
     mostrar_ejes_locales: bool = True,
     longitud_vector: float = 45.0,
     escala_diagrama_corte: float = 1.0,
-    titulo_app: str = "Dibujos — Estructura, Fuerzas, V_y, V_z, N_x y M_y",
+    titulo_app: str = "Dibujos — Estructura, Fuerzas, V_y, V_z, N_x, M_y y M_z",
 ):
     """
     Una sola ventana con pestañas: **Dibujo_Estructura**, **Dibujo_Fuerzas**,
-    **Corte V_y**, **Corte V_z**, **N_x (esfuerzo normal)** y **Momento M_y**
+    **Corte V_y**, **Corte V_z**, **N_x**, **Momento M_y** y **Momento M_z**
     (Tkinter + matplotlib).
 
     Si Tkinter o el backend embebido no están disponibles, cae a ventanas
@@ -2218,6 +2459,17 @@ def mostrar_dibujos_matplotlib_pestanas(
         )
         if fig_my is not None:
             plt.show()
+        fig_mz, _ = dibujo_momento_mz_flexion(
+            nodos,
+            barras,
+            nodos_dict,
+            ipn_dims=ipn_dims,
+            escala_seccion=escala_seccion,
+            mostrar_ejes_locales=mostrar_ejes_locales,
+            escala_diagrama_momento=escala_diagrama_corte,
+        )
+        if fig_mz is not None:
+            plt.show()
         return
 
     root = tk.Tk()
@@ -2293,7 +2545,7 @@ def mostrar_dibujos_matplotlib_pestanas(
     _embed_pestana("Dibujo_Estructura", _pest_estructura)
     _embed_pestana("Dibujo_Fuerzas", _pest_fuerzas)
 
-    # Tooltip compartido entre pestañas V_y, V_z, N_x y M_y
+    # Tooltip compartido entre pestañas V_y, V_z, N_x, M_y y M_z
     tooltip_win = tk.Toplevel(root)
     tooltip_win.withdraw()
     tooltip_win.overrideredirect(True)
@@ -2320,6 +2572,7 @@ def mostrar_dibujos_matplotlib_pestanas(
     escala_vz_var = tk.DoubleVar(value=float(escala_diagrama_corte))
     escala_nx_var = tk.DoubleVar(value=float(escala_diagrama_corte))
     escala_my_var = tk.DoubleVar(value=float(escala_diagrama_corte))
+    escala_mz_var = tk.DoubleVar(value=float(escala_diagrama_corte))
 
     def _add_pestana_diagrama_corte(
         titulo_pestana: str,
@@ -2337,6 +2590,17 @@ def mostrar_dibujos_matplotlib_pestanas(
             ax_tab.clear()
             if modo_corte == "my":
                 dibujo_momento_my_flexion(
+                    nodos,
+                    barras,
+                    nodos_dict,
+                    ipn_dims=ipn_dims,
+                    escala_seccion=escala_seccion,
+                    mostrar_ejes_locales=mostrar_ejes_locales,
+                    escala_diagrama_momento=float(escala_var.get()),
+                    ax=ax_tab,
+                )
+            elif modo_corte == "mz":
+                dibujo_momento_mz_flexion(
                     nodos,
                     barras,
                     nodos_dict,
@@ -2393,8 +2657,12 @@ def mostrar_dibujos_matplotlib_pestanas(
             etiqueta_v = "V_z"
         elif modo_corte == "nx":
             etiqueta_v = "N_x"
-        else:
+        elif modo_corte == "my":
             etiqueta_v = "M_y"
+        elif modo_corte == "mz":
+            etiqueta_v = "M_z"
+        else:
+            etiqueta_v = "?"
 
         def _on_hover(event):
             if event.inaxes != ax_tab:
@@ -2425,6 +2693,8 @@ def mostrar_dibujos_matplotlib_pestanas(
                 sufijo = " (conv. visual: compresión → −, tracción → +)"
             elif modo_corte == "my":
                 sufijo = " (local; +M_y → −z_local)"
+            elif modo_corte == "mz":
+                sufijo = " (local; +M_z → +y_local)"
             else:
                 sufijo = " (local)"
             tooltip_label.config(
@@ -2485,6 +2755,12 @@ def mostrar_dibujos_matplotlib_pestanas(
         "my",
         escala_my_var,
         "Escala diagrama M_y:",
+    )
+    _add_pestana_diagrama_corte(
+        "Momento M_z",
+        "mz",
+        escala_mz_var,
+        "Escala diagrama M_z:",
     )
 
     root.mainloop()
