@@ -1179,11 +1179,15 @@ def _coord_local_x_sobre_barra(barra: Any, punto_global: np.ndarray) -> float:
     return float(np.dot(np.asarray(punto_global, dtype=float) - p_i, x_local))
 
 
-def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
+def _diagrama_corte_local_barra(barra: Any, idx_corte: int) -> tuple:
     """
-    Construye el diagrama escalonado de corte local V_y para una barra.
+    Diagrama escalonado de la componente local idx_corte del vector de fuerzas
+    (Fx,Fy,Fz) en extremos: idx 0 = eje barra (N), 1 = V_y, 2 = V_z.
     Retorna (x_plot, v_plot, L, V_i, V_f).
     """
+    if idx_corte not in (0, 1, 2):
+        raise ValueError("idx_corte debe ser 0 (N_x), 1 (V_y) o 2 (V_z)")
+
     if hasattr(barra, "solicitacion_extremo_de_barra_local"):
         try:
             barra.solicitacion_extremo_de_barra_local()
@@ -1200,13 +1204,13 @@ def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
 
     si = np.asarray(getattr(barra, "solicitaciones_extremo_i_local", np.zeros(6)), dtype=float).ravel()
     sf = np.asarray(getattr(barra, "solicitaciones_extremo_f_local", np.zeros(6)), dtype=float).ravel()
-    V_i = float(si[1]) if si.size >= 2 else 0.0
-    V_f = float(sf[1]) if sf.size >= 2 else 0.0
+    V_i = float(si[idx_corte]) if si.size > idx_corte else 0.0
+    V_f = float(sf[idx_corte]) if sf.size > idx_corte else 0.0
 
     eventos = []
     for carga in getattr(barra, "cargas", []) or []:
         f_local = np.asarray(getattr(carga, "f_local", np.zeros(3)), dtype=float).ravel()
-        qy_local = float(f_local[1]) if f_local.size >= 2 else 0.0
+        q_loc = float(f_local[idx_corte]) if f_local.size > idx_corte else 0.0
         p = np.asarray(
             [float(getattr(carga, "x", 0.0)), float(getattr(carga, "y", 0.0)), float(getattr(carga, "z", 0.0))],
             dtype=float,
@@ -1214,7 +1218,7 @@ def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
         x_c = _coord_local_x_sobre_barra(barra, p)
         if L > 0.0:
             x_c = max(0.0, min(L, x_c))
-        eventos.append((x_c, qy_local))
+        eventos.append((x_c, q_loc))
 
     eventos.sort(key=lambda t: t[0])
 
@@ -1222,19 +1226,23 @@ def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
     v_plot = [V_i]
     V_actual = V_i
 
-    for x_c, qy in eventos:
+    for x_c, q_jump in eventos:
         x_plot.extend([x_c, x_c])
-        v_plot.extend([V_actual, V_actual + qy])
-        V_actual = V_actual + qy
+        v_plot.extend([V_actual, V_actual + q_jump])
+        V_actual = V_actual + q_jump
 
     x_plot.append(L)
     v_plot.append(V_actual)
 
-    # Salto final con la solicitación de extremo del nodo final (cierre de equilibrio)
     x_plot.append(L)
     v_plot.append(V_actual + V_f)
 
     return np.asarray(x_plot, dtype=float), np.asarray(v_plot, dtype=float), L, V_i, V_f
+
+
+def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
+    """Compatibilidad: equivale a idx_corte=1 (V_y)."""
+    return _diagrama_corte_local_barra(barra, 1)
 
 
 def _world_to_canvas_pixels_3d(ax, wx: float, wy: float, wz: float):
@@ -1261,25 +1269,38 @@ def _world_to_canvas_pixels_3d(ax, wx: float, wy: float, wz: float):
     return ax.transData.transform((float(xs[0]), float(ys[0])))
 
 
-def _rellenar_franjas_diagrama_vy_3d(
+# Colores globales del diagrama (valor mostrado): positivo / negativo / ~cero
+_DIAG_COLOR_POS = "#27ae60"
+_DIAG_COLOR_NEG = "#e74c3c"
+_DIAG_COLOR_ZERO = "#95a5a6"
+
+
+def _rellenar_franjas_diagrama_corte_3d(
     ax,
     origin: np.ndarray,
     x_local: np.ndarray,
-    y_local: np.ndarray,
+    offset_local: np.ndarray,
     x_b: np.ndarray,
     v_b: np.ndarray,
     escala_v: float,
-    color_cara: str = "#8e44ad",
+    color_pos: str = _DIAG_COLOR_POS,
+    color_neg: str = _DIAG_COLOR_NEG,
+    color_zero: str = _DIAG_COLOR_ZERO,
     alpha: float = 0.42,
 ) -> List[np.ndarray]:
     """
-    Rellena con cuadriláteros el área entre la línea base (V=0) y el diagrama
-    en cada tramo horizontal (corte constante).
+    Rellena el área entre la línea base (corte=0) y el diagrama en el plano
+    X–offset (offset = y_local para V_y y N_x, z_local para V_z).
+    Una cara por tramo horizontal; color según el signo del valor constante.
     """
     extras: List[np.ndarray] = []
     if x_b.size < 2:
         return extras
-    caras = []
+    caras_pos: List = []
+    caras_neg: List = []
+    caras_zero: List = []
+    atol = 1e-9 * max(1.0, float(np.max(np.abs(v_b))) if v_b.size else 1.0)
+
     for k in range(len(x_b) - 1):
         xa, xb = float(x_b[k]), float(x_b[k + 1])
         va, vb = float(v_b[k]), float(v_b[k + 1])
@@ -1289,21 +1310,98 @@ def _rellenar_franjas_diagrama_vy_3d(
             continue
         base_a = origin + xa * x_local
         base_b = origin + xb * x_local
-        top_a = origin + xa * x_local + va * escala_v * y_local
-        top_b = origin + xb * x_local + vb * escala_v * y_local
+        top_a = origin + xa * x_local + va * escala_v * offset_local
+        top_b = origin + xb * x_local + vb * escala_v * offset_local
         quad = [base_a, base_b, top_b, top_a]
-        caras.append(quad)
         extras.extend(quad)
-    if caras:
+        if abs(va) <= atol:
+            caras_zero.append(quad)
+        elif va > 0:
+            caras_pos.append(quad)
+        else:
+            caras_neg.append(quad)
+
+    for caras, col in (
+        (caras_pos, color_pos),
+        (caras_neg, color_neg),
+        (caras_zero, color_zero),
+    ):
+        if not caras:
+            continue
         poly = Poly3DCollection(
             caras,
-            facecolors=color_cara,
-            edgecolors=color_cara,
+            facecolors=col,
+            edgecolors=col,
             linewidths=0.35,
             alpha=alpha,
         )
         ax.add_collection3d(poly)
     return extras
+
+
+def _plot_polilinea_diagrama_coloreada(
+    ax,
+    pts: np.ndarray,
+    v_vals: np.ndarray,
+    color_pos: str = _DIAG_COLOR_POS,
+    color_neg: str = _DIAG_COLOR_NEG,
+    color_zero: str = _DIAG_COLOR_ZERO,
+    lw: float = 2.0,
+) -> None:
+    """
+    Dibuja la polilínea del diagrama coloreando por signo del valor mostrado.
+    Si un segmento une valores de signo opuesto, parte en el cruce con el eje base.
+    """
+    vmax = float(np.max(np.abs(v_vals))) if v_vals.size else 1.0
+    eps = max(1e-15, 1e-12 * max(vmax, 1.0))
+
+    def color_for(v: float) -> str:
+        if v > eps:
+            return color_pos
+        if v < -eps:
+            return color_neg
+        return color_zero
+
+    n = len(pts)
+    for k in range(n - 1):
+        p0 = pts[k]
+        p1 = pts[k + 1]
+        v0 = float(v_vals[k])
+        v1 = float(v_vals[k + 1])
+
+        if abs(v0 - v1) > eps and v0 * v1 < 0:
+            denom = v0 - v1
+            if abs(denom) > 1e-18:
+                t = v0 / denom
+                t = max(0.0, min(1.0, t))
+                pm = p0 + t * (p1 - p0)
+                ax.plot(
+                    [p0[0], pm[0]],
+                    [p0[1], pm[1]],
+                    [p0[2], pm[2]],
+                    color=color_for(v0),
+                    linewidth=lw,
+                )
+                ax.plot(
+                    [pm[0], p1[0]],
+                    [pm[1], p1[1]],
+                    [pm[2], p1[2]],
+                    color=color_for(v1),
+                    linewidth=lw,
+                )
+                continue
+
+        if abs(v0 - v1) <= eps:
+            c = color_for(v0)
+        else:
+            c = color_for(0.5 * (v0 + v1))
+        ax.plot(
+            [p0[0], p1[0]],
+            [p0[1], p1[1]],
+            [p0[2], p1[2]],
+            color=c,
+            linewidth=lw,
+        )
 
 
 def dibujo_esfuerzos_corte(
@@ -1314,11 +1412,17 @@ def dibujo_esfuerzos_corte(
     escala_seccion: float = 1.0,
     mostrar_ejes_locales: bool = False,
     escala_diagrama_corte: float = 1.0,
+    corte: str = "vy",
     ax=None,
 ):
     """
-    **Esfuerzos de corte** — estructura 3D + diagrama V_y local sobre cada barra.
-    El diagrama se dibuja en el plano local X-Y de cada elemento.
+    **Esfuerzos de corte** — estructura 3D + diagrama de corte local sobre cada barra.
+
+    - ``corte="vy"``: V_y (2.º componente Fy del vector local), plano X–Y local.
+    - ``corte="vz"``: V_z (3.er componente Fz del vector local), plano X–Z local.
+    - ``corte="nx"``: N_x — esfuerzo normal (1.er componente Fx local); el dibujo
+      usa solo efectos visuales con **signo invertido** respecto al valor fisico
+      (compresión → lado negativo del diagrama, tracción → positivo).
 
     Parameters
     ----------
@@ -1328,6 +1432,10 @@ def dibujo_esfuerzos_corte(
     """
     if not MATPLOTLIB_AVAILABLE:
         raise ImportError("matplotlib no está instalado. Ejecuta: pip install matplotlib")
+
+    if corte not in ("vy", "vz", "nx"):
+        raise ValueError('corte debe ser "vy", "vz" o "nx"')
+    idx_corte = {"vy": 1, "vz": 2, "nx": 0}[corte]
 
     h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
 
@@ -1344,18 +1452,34 @@ def dibujo_esfuerzos_corte(
     # Puntos para tooltip al pasar el mouse (se usa desde la pestaña Tk)
     ax._shear_hover_points = []  # type: ignore[attr-defined]
 
-    # Escala grafica de Vy para que se vea sobre la geometria.
+    # Escala grafica del corte para que se vea sobre la geometria.
     max_abs_v_global = 0.0
     Ls = []
     for barra in barras:
-        x_b, v_b, L, _, _ = _diagrama_corte_vy_local_barra(barra)
+        x_b, v_b, L, _, _ = _diagrama_corte_local_barra(barra, idx_corte)
         if x_b.size > 0:
-            max_abs_v_global = max(max_abs_v_global, float(np.max(np.abs(v_b))))
+            v_escala = -v_b if corte == "nx" else v_b
+            max_abs_v_global = max(max_abs_v_global, float(np.max(np.abs(v_escala))))
         if L > 0:
             Ls.append(float(L))
     L_ref = float(np.mean(Ls)) if Ls else 100.0
     escala_base = (0.18 * L_ref / max_abs_v_global) if max_abs_v_global > 1e-12 else 1.0
     escala_v = escala_base * float(escala_diagrama_corte)
+
+    color_pos = _DIAG_COLOR_POS
+    color_neg = _DIAG_COLOR_NEG
+    color_zero = _DIAG_COLOR_ZERO
+    color_base = "#7f8c8d"
+
+    if corte == "vy":
+        lbl_diag = "Vy"
+        titulo_ax = "Esfuerzos de corte — V_y local (verde + / rojo −)"
+    elif corte == "vz":
+        lbl_diag = "Vz"
+        titulo_ax = "Esfuerzos de corte — V_z local (verde + / rojo −)"
+    else:
+        lbl_diag = "Nx"
+        titulo_ax = "Esfuerzo normal N_x local — conv. visual (verde + / rojo −)"
 
     for barra in barras:
         coord_i, coord_f = obtener_coordenadas_barra(barra, nodos_dict)
@@ -1367,67 +1491,96 @@ def dibujo_esfuerzos_corte(
         origin = np.asarray(coord_i, dtype=float)
         x_local = np.asarray(getattr(barra, "x_local", [1.0, 0.0, 0.0]), dtype=float).ravel()[:3]
         y_local = np.asarray(getattr(barra, "y_local", [0.0, 1.0, 0.0]), dtype=float).ravel()[:3]
-        nx = max(np.linalg.norm(x_local), 1e-12)
-        ny = max(np.linalg.norm(y_local), 1e-12)
-        x_local = x_local / nx
-        y_local = y_local / ny
+        z_local = np.asarray(getattr(barra, "z_local", [0.0, 0.0, 1.0]), dtype=float).ravel()[:3]
+        nrm_x = max(np.linalg.norm(x_local), 1e-12)
+        nrm_y = max(np.linalg.norm(y_local), 1e-12)
+        nrm_z = max(np.linalg.norm(z_local), 1e-12)
+        x_local = x_local / nrm_x
+        y_local = y_local / nrm_y
+        z_local = z_local / nrm_z
 
-        x_b, v_b, L, _, _ = _diagrama_corte_vy_local_barra(barra)
+        # N_x se dibuja en plano X–Y local (misma geometría que V_y), separado por color
+        offset_local = y_local if corte in ("vy", "nx") else z_local
+
+        x_b, v_b, L, _, _ = _diagrama_corte_local_barra(barra, idx_corte)
         if x_b.size == 0:
             continue
 
-        extras_fill = _rellenar_franjas_diagrama_vy_3d(
-            ax, origin, x_local, y_local, x_b, v_b, escala_v
+        v_dib = (-v_b) if corte == "nx" else v_b
+
+        extras_fill = _rellenar_franjas_diagrama_corte_3d(
+            ax,
+            origin,
+            x_local,
+            offset_local,
+            x_b,
+            v_dib,
+            escala_v,
+            color_pos=color_pos,
+            color_neg=color_neg,
+            color_zero=color_zero,
         )
         all_points.extend(extras_fill)
 
-        pts = np.array([origin + xb * x_local + (vb * escala_v) * y_local for xb, vb in zip(x_b, v_b)], dtype=float)
-        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color="#5b2c6f", linewidth=2.0)
+        pts = np.array(
+            [origin + xb * x_local + (vb * escala_v) * offset_local for xb, vb in zip(x_b, v_dib)],
+            dtype=float,
+        )
+        _plot_polilinea_diagrama_coloreada(
+            ax, pts, v_dib, color_pos=color_pos, color_neg=color_neg, color_zero=color_zero, lw=2.0
+        )
 
-        def _append_hover(x_loc: float, vy: float, pt_xyz: np.ndarray) -> None:
+        def _append_hover(x_loc: float, v_val: float, pt_xyz: np.ndarray) -> None:
             ax._shear_hover_points.append(  # type: ignore[attr-defined]
                 {
                     "bar_id": getattr(barra, "id", None),
                     "x_local": float(x_loc),
-                    "vy": float(vy),
+                    "v": float(v_val),
+                    "corte": corte,
                     "pos": (float(pt_xyz[0]), float(pt_xyz[1]), float(pt_xyz[2])),
                 }
             )
 
         for k in range(len(x_b)):
-            _append_hover(float(x_b[k]), float(v_b[k]), pts[k])
+            _append_hover(float(x_b[k]), float(v_dib[k]), pts[k])
 
         for k in range(len(x_b) - 1):
             xa, xb = float(x_b[k]), float(x_b[k + 1])
-            va, vb = float(v_b[k]), float(v_b[k + 1])
+            va, vb = float(v_dib[k]), float(v_dib[k + 1])
             if abs(xb - xa) < 1e-12:
                 continue
             if not np.isclose(va, vb, rtol=1e-9, atol=1e-12 * max(1.0, abs(va), abs(vb))):
                 continue
             for t in (0.25, 0.5, 0.75):
                 xm = xa + t * (xb - xa)
-                pt = origin + xm * x_local + va * escala_v * y_local
+                pt = origin + xm * x_local + va * escala_v * offset_local
                 _append_hover(xm, va, pt)
 
-        # Linea base Vy=0 sobre el eje de la barra
+        # Linea base (corte=0) sobre el eje de la barra
         base_i = origin
         base_f = origin + L * x_local
         ax.plot(
             [base_i[0], base_f[0]],
             [base_i[1], base_f[1]],
             [base_i[2], base_f[2]],
-            color="#8e44ad",
+            color=color_base,
             linewidth=0.8,
             linestyle="--",
             alpha=0.7,
         )
 
-        # Etiqueta de barra cerca del medio del diagrama
         pm = origin + 0.5 * L * x_local
-        ax.text(pm[0], pm[1], pm[2], f"Vy B{getattr(barra, 'id', '?')}", fontsize=8, color="#6c3483")
+        ax.text(
+            pm[0],
+            pm[1],
+            pm[2],
+            f"{lbl_diag} B{getattr(barra, 'id', '?')}",
+            fontsize=8,
+            color="#2c3e50",
+        )
         all_points.extend([p for p in pts])
 
-    _ajustar_vista_bbox_3d(ax, all_points, "Esfuerzos de corte — V_y local sobre barras")
+    _ajustar_vista_bbox_3d(ax, all_points, titulo_ax)
 
     if Patch is not None:
         try:
@@ -1435,10 +1588,22 @@ def dibujo_esfuerzos_corte(
                 handles=[
                     Patch(facecolor="#7fb3d5", edgecolor="#1b4f72", linewidth=0.35, label="Estructura"),
                     Patch(
-                        facecolor="#8e44ad",
-                        edgecolor="#6c3483",
+                        facecolor=color_pos,
+                        edgecolor=color_pos,
                         linewidth=0.35,
-                        label="V_y local (relleno + contorno; usa escala)",
+                        label="Diagrama valor > 0",
+                    ),
+                    Patch(
+                        facecolor=color_neg,
+                        edgecolor=color_neg,
+                        linewidth=0.35,
+                        label="Diagrama valor < 0",
+                    ),
+                    Patch(
+                        facecolor=color_zero,
+                        edgecolor=color_zero,
+                        linewidth=0.35,
+                        label="Diagrama ~ 0",
                     ),
                 ],
                 loc="upper right",
@@ -1606,13 +1771,13 @@ def mostrar_dibujos_matplotlib_pestanas(
     mostrar_ejes_locales: bool = True,
     longitud_vector: float = 45.0,
     escala_diagrama_corte: float = 1.0,
-    titulo_app: str = "Dibujos — Dibujo_Estructura, Dibujo_Fuerzas y Esfuerzos de corte",
+    titulo_app: str = "Dibujos — Estructura, Fuerzas, Corte V_y, V_z y N_x",
 ):
     """
-    Una sola ventana con pestañas: **Dibujo_Estructura**, **Dibujo_Fuerzas** y
-    **Esfuerzos de corte** (Tkinter + matplotlib).
+    Una sola ventana con pestañas: **Dibujo_Estructura**, **Dibujo_Fuerzas**,
+    **Corte V_y**, **Corte V_z** y **N_x (esfuerzo normal)** (Tkinter + matplotlib).
 
-    Si Tkinter o el backend embebido no están disponibles, cae a dos ventanas
+    Si Tkinter o el backend embebido no están disponibles, cae a ventanas
     ``plt.show()`` seguidas.
     """
     if not MATPLOTLIB_AVAILABLE:
@@ -1653,7 +1818,7 @@ def mostrar_dibujos_matplotlib_pestanas(
         )
         if fig_b is not None:
             plt.show()
-        fig_c, _ = dibujo_esfuerzos_corte(
+        fig_cy, _ = dibujo_esfuerzos_corte(
             nodos,
             barras,
             nodos_dict,
@@ -1661,8 +1826,33 @@ def mostrar_dibujos_matplotlib_pestanas(
             escala_seccion=escala_seccion,
             mostrar_ejes_locales=mostrar_ejes_locales,
             escala_diagrama_corte=escala_diagrama_corte,
+            corte="vy",
         )
-        if fig_c is not None:
+        if fig_cy is not None:
+            plt.show()
+        fig_cz, _ = dibujo_esfuerzos_corte(
+            nodos,
+            barras,
+            nodos_dict,
+            ipn_dims=ipn_dims,
+            escala_seccion=escala_seccion,
+            mostrar_ejes_locales=mostrar_ejes_locales,
+            escala_diagrama_corte=escala_diagrama_corte,
+            corte="vz",
+        )
+        if fig_cz is not None:
+            plt.show()
+        fig_cn, _ = dibujo_esfuerzos_corte(
+            nodos,
+            barras,
+            nodos_dict,
+            ipn_dims=ipn_dims,
+            escala_seccion=escala_seccion,
+            mostrar_ejes_locales=mostrar_ejes_locales,
+            escala_diagrama_corte=escala_diagrama_corte,
+            corte="nx",
+        )
+        if fig_cn is not None:
             plt.show()
         return
 
@@ -1739,56 +1929,7 @@ def mostrar_dibujos_matplotlib_pestanas(
     _embed_pestana("Dibujo_Estructura", _pest_estructura)
     _embed_pestana("Dibujo_Fuerzas", _pest_fuerzas)
 
-    # Pestaña Esfuerzos de corte: escala del diagrama Vy ajustable con slider
-    tab_corte = ttk.Frame(nb)
-    nb.add(tab_corte, text="Esfuerzos de corte")
-    fig_corte = Figure(figsize=(10, 7), dpi=100)
-    ax_corte = fig_corte.add_subplot(111, projection="3d")
-    canvas_corte = FigureCanvasTkAgg(fig_corte, master=tab_corte)
-
-    escala_vy_var = tk.DoubleVar(value=float(escala_diagrama_corte))
-
-    def _redraw_corte():
-        ax_corte.clear()
-        dibujo_esfuerzos_corte(
-            nodos,
-            barras,
-            nodos_dict,
-            ipn_dims=ipn_dims,
-            escala_seccion=escala_seccion,
-            mostrar_ejes_locales=mostrar_ejes_locales,
-            escala_diagrama_corte=float(escala_vy_var.get()),
-            ax=ax_corte,
-        )
-        _tight_layout_o_margenes_3d(fig_corte)
-        _ocultar_ticklabels_mpl3d_borde(ax_corte)
-        canvas_corte.draw_idle()
-
-    ctrl_corte = ttk.Frame(tab_corte)
-    ctrl_corte.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
-    ttk.Label(ctrl_corte, text="Escala diagrama Vy:").pack(side=tk.LEFT, padx=(0, 8))
-    lbl_escala_vy = ttk.Label(ctrl_corte, width=6)
-
-    def _actualizar_etiqueta_escala(_arg=None):
-        lbl_escala_vy.config(text=f"{float(escala_vy_var.get()):.2f}")
-
-    scale_corte = ttk.Scale(
-        ctrl_corte,
-        from_=0.2,
-        to=10.0,
-        orient=tk.HORIZONTAL,
-        variable=escala_vy_var,
-        command=lambda _v: _actualizar_etiqueta_escala(),
-    )
-    scale_corte.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-    lbl_escala_vy.pack(side=tk.RIGHT)
-
-    def _redraw_corte_al_soltar(_evt=None):
-        _redraw_corte()
-        _actualizar_etiqueta_escala()
-
-    scale_corte.bind("<ButtonRelease-1>", _redraw_corte_al_soltar)
-
+    # Tooltip compartido entre pestañas V_y, V_z y N_x
     tooltip_win = tk.Toplevel(root)
     tooltip_win.withdraw()
     tooltip_win.overrideredirect(True)
@@ -1811,68 +1952,154 @@ def mostrar_dibujos_matplotlib_pestanas(
         except Exception:
             pass
 
-    def _on_hover_corte(event):
-        if event.inaxes != ax_corte:
-            _hide_tooltip()
-            return
-        pts_hover = getattr(ax_corte, "_shear_hover_points", None) or []
-        if not pts_hover:
-            _hide_tooltip()
-            return
-        mx, my = float(event.x), float(event.y)
-        best = None
-        best_d = 28.0
-        for p in pts_hover:
-            wx, wy, wz = p["pos"]
-            pr = _world_to_canvas_pixels_3d(ax_corte, wx, wy, wz)
-            if pr is None:
-                continue
-            px, py = float(pr[0]), float(pr[1])
-            d = float(np.hypot(px - mx, py - my))
-            if d < best_d:
-                best_d = d
-                best = p
-        if best is None:
-            _hide_tooltip()
-            return
+    escala_vy_var = tk.DoubleVar(value=float(escala_diagrama_corte))
+    escala_vz_var = tk.DoubleVar(value=float(escala_diagrama_corte))
+    escala_nx_var = tk.DoubleVar(value=float(escala_diagrama_corte))
 
-        tooltip_label.config(
-            text=(
-            f"Barra {best['bar_id']} | x_local = {best['x_local']:.2f} cm | "
-            f"V_y = {best['vy']:.6g} (local)"
+    def _add_pestana_diagrama_corte(
+        titulo_pestana: str,
+        modo_corte: str,
+        escala_var: Any,
+        texto_escala: str,
+    ) -> None:
+        tab = ttk.Frame(nb)
+        nb.add(tab, text=titulo_pestana)
+        fig = Figure(figsize=(10, 7), dpi=100)
+        ax_tab = fig.add_subplot(111, projection="3d")
+        canvas = FigureCanvasTkAgg(fig, master=tab)
+
+        def _redraw():
+            ax_tab.clear()
+            dibujo_esfuerzos_corte(
+                nodos,
+                barras,
+                nodos_dict,
+                ipn_dims=ipn_dims,
+                escala_seccion=escala_seccion,
+                mostrar_ejes_locales=mostrar_ejes_locales,
+                escala_diagrama_corte=float(escala_var.get()),
+                corte=modo_corte,
+                ax=ax_tab,
             )
+            _tight_layout_o_margenes_3d(fig)
+            _ocultar_ticklabels_mpl3d_borde(ax_tab)
+            canvas.draw_idle()
+
+        ctrl = ttk.Frame(tab)
+        ctrl.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
+        ttk.Label(ctrl, text=texto_escala).pack(side=tk.LEFT, padx=(0, 8))
+        lbl_val = ttk.Label(ctrl, width=6)
+
+        def _actualizar_lbl(_arg=None):
+            lbl_val.config(text=f"{float(escala_var.get()):.2f}")
+
+        sc = ttk.Scale(
+            ctrl,
+            from_=0.2,
+            to=10.0,
+            orient=tk.HORIZONTAL,
+            variable=escala_var,
+            command=lambda _v: _actualizar_lbl(),
         )
-        x_root = int(root.winfo_pointerx()) + 14
-        y_root = int(root.winfo_pointery()) + 14
-        tooltip_win.geometry(f"+{x_root}+{y_root}")
-        tooltip_win.deiconify()
-        tooltip_win.lift()
+        sc.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        lbl_val.pack(side=tk.RIGHT)
 
-    def _on_leave_hover(_event=None):
-        _hide_tooltip()
+        def _redraw_al_soltar(_evt=None):
+            _redraw()
+            _actualizar_lbl()
 
-    canvas_corte.mpl_connect("motion_notify_event", _on_hover_corte)
-    canvas_corte.mpl_connect("axes_leave_event", _on_leave_hover)
+        sc.bind("<ButtonRelease-1>", _redraw_al_soltar)
 
-    canvas_corte.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-    bar_corte = ttk.Frame(tab_corte)
-    bar_corte.pack(side=tk.BOTTOM, fill=tk.X)
-    try:
-        NavigationToolbar2Tk(canvas_corte, bar_corte)
-    except Exception:
-        pass
+        if modo_corte == "vy":
+            etiqueta_v = "V_y"
+        elif modo_corte == "vz":
+            etiqueta_v = "V_z"
+        else:
+            etiqueta_v = "N_x"
 
-    _redraw_corte()
-    _actualizar_etiqueta_escala()
-    try:
-        canvas_corte.draw()
-    except Exception as err:
-        if "bboxes" not in str(err).lower():
-            raise
-        leg = ax_corte.get_legend()
-        if leg is not None:
-            leg.remove()
-        canvas_corte.draw()
+        def _on_hover(event):
+            if event.inaxes != ax_tab:
+                _hide_tooltip()
+                return
+            pts_hover = getattr(ax_tab, "_shear_hover_points", None) or []
+            if not pts_hover:
+                _hide_tooltip()
+                return
+            mx, my = float(event.x), float(event.y)
+            best = None
+            best_d = 28.0
+            for p in pts_hover:
+                wx, wy, wz = p["pos"]
+                pr = _world_to_canvas_pixels_3d(ax_tab, wx, wy, wz)
+                if pr is None:
+                    continue
+                px, py = float(pr[0]), float(pr[1])
+                d = float(np.hypot(px - mx, py - my))
+                if d < best_d:
+                    best_d = d
+                    best = p
+            if best is None:
+                _hide_tooltip()
+                return
+            v_val = float(best.get("v", best.get("vy", 0.0)))
+            sufijo = (
+                " (conv. visual: compresión → −, tracción → +)"
+                if modo_corte == "nx"
+                else " (local)"
+            )
+            tooltip_label.config(
+                text=(
+                    f"Barra {best['bar_id']} | x_local = {best['x_local']:.2f} cm | "
+                    f"{etiqueta_v} = {v_val:.6g}{sufijo}"
+                )
+            )
+            x_root = int(root.winfo_pointerx()) + 14
+            y_root = int(root.winfo_pointery()) + 14
+            tooltip_win.geometry(f"+{x_root}+{y_root}")
+            tooltip_win.deiconify()
+            tooltip_win.lift()
+
+        canvas.mpl_connect("motion_notify_event", _on_hover)
+        canvas.mpl_connect("axes_leave_event", lambda _e: _hide_tooltip())
+
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        bar = ttk.Frame(tab)
+        bar.pack(side=tk.BOTTOM, fill=tk.X)
+        try:
+            NavigationToolbar2Tk(canvas, bar)
+        except Exception:
+            pass
+
+        _redraw()
+        _actualizar_lbl()
+        try:
+            canvas.draw()
+        except Exception as err:
+            if "bboxes" not in str(err).lower():
+                raise
+            leg = ax_tab.get_legend()
+            if leg is not None:
+                leg.remove()
+            canvas.draw()
+
+    _add_pestana_diagrama_corte(
+        "Esfuerzos de corte V_y",
+        "vy",
+        escala_vy_var,
+        "Escala diagrama V_y:",
+    )
+    _add_pestana_diagrama_corte(
+        "Esfuerzos de corte V_z",
+        "vz",
+        escala_vz_var,
+        "Escala diagrama V_z:",
+    )
+    _add_pestana_diagrama_corte(
+        "Esfuerzo normal N_x",
+        "nx",
+        escala_nx_var,
+        "Escala diagrama N_x:",
+    )
 
     root.mainloop()
 
