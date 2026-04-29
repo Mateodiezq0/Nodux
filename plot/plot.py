@@ -15,6 +15,7 @@ try:
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
     from matplotlib.ticker import MaxNLocator
+    from mpl_toolkits.mplot3d import proj3d
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     from mpl_toolkits.mplot3d.axes3d import Axes3D
     MATPLOTLIB_AVAILABLE = True
@@ -22,6 +23,7 @@ except ImportError:
     MaxNLocator = None  # type: ignore
     Patch = None  # type: ignore
     Axes3D = None  # type: ignore
+    proj3d = None  # type: ignore
     MATPLOTLIB_AVAILABLE = False
 
 # Intentar importar Plotly
@@ -1235,6 +1237,30 @@ def _diagrama_corte_vy_local_barra(barra: Any) -> tuple:
     return np.asarray(x_plot, dtype=float), np.asarray(v_plot, dtype=float), L, V_i, V_f
 
 
+def _world_to_canvas_pixels_3d(ax, wx: float, wy: float, wz: float):
+    """
+    Proyecta un punto 3D de datos a píxeles de pantalla del canvas (misma
+    convención que MouseEvent.x / .y) para comparar distancia al cursor.
+    """
+    if proj3d is None or Axes3D is None or not isinstance(ax, Axes3D):
+        return None
+    if getattr(ax, "M", None) is None:
+        ax.M = ax.get_proj()
+    xs, ys, zs, vis = proj3d._proj_transform_clip(
+        [float(wx)],
+        [float(wy)],
+        [float(wz)],
+        ax.M,
+        ax._focal_length,
+    )
+    v0 = np.asarray(vis).ravel()[0]
+    if hasattr(v0, "mask") and np.ma.getmask(v0):
+        return None
+    if not bool(v0):
+        return None
+    return ax.transData.transform((float(xs[0]), float(ys[0])))
+
+
 def _rellenar_franjas_diagrama_vy_3d(
     ax,
     origin: np.ndarray,
@@ -1315,6 +1341,9 @@ def dibujo_esfuerzos_corte(
         ax, nodos, barras, nodos_dict, h, b, tw, tf, mostrar_ejes_locales, leyenda_vinculos=False
     )
 
+    # Puntos para tooltip al pasar el mouse (se usa desde la pestaña Tk)
+    ax._shear_hover_points = []  # type: ignore[attr-defined]
+
     # Escala grafica de Vy para que se vea sobre la geometria.
     max_abs_v_global = 0.0
     Ls = []
@@ -1354,6 +1383,31 @@ def dibujo_esfuerzos_corte(
 
         pts = np.array([origin + xb * x_local + (vb * escala_v) * y_local for xb, vb in zip(x_b, v_b)], dtype=float)
         ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color="#5b2c6f", linewidth=2.0)
+
+        def _append_hover(x_loc: float, vy: float, pt_xyz: np.ndarray) -> None:
+            ax._shear_hover_points.append(  # type: ignore[attr-defined]
+                {
+                    "bar_id": getattr(barra, "id", None),
+                    "x_local": float(x_loc),
+                    "vy": float(vy),
+                    "pos": (float(pt_xyz[0]), float(pt_xyz[1]), float(pt_xyz[2])),
+                }
+            )
+
+        for k in range(len(x_b)):
+            _append_hover(float(x_b[k]), float(v_b[k]), pts[k])
+
+        for k in range(len(x_b) - 1):
+            xa, xb = float(x_b[k]), float(x_b[k + 1])
+            va, vb = float(v_b[k]), float(v_b[k + 1])
+            if abs(xb - xa) < 1e-12:
+                continue
+            if not np.isclose(va, vb, rtol=1e-9, atol=1e-12 * max(1.0, abs(va), abs(vb))):
+                continue
+            for t in (0.25, 0.5, 0.75):
+                xm = xa + t * (xb - xa)
+                pt = origin + xm * x_local + va * escala_v * y_local
+                _append_hover(xm, va, pt)
 
         # Linea base Vy=0 sobre el eje de la barra
         base_i = origin
@@ -1734,6 +1788,71 @@ def mostrar_dibujos_matplotlib_pestanas(
         _actualizar_etiqueta_escala()
 
     scale_corte.bind("<ButtonRelease-1>", _redraw_corte_al_soltar)
+
+    tooltip_win = tk.Toplevel(root)
+    tooltip_win.withdraw()
+    tooltip_win.overrideredirect(True)
+    tooltip_win.attributes("-topmost", True)
+    tooltip_label = tk.Label(
+        tooltip_win,
+        text="",
+        relief=tk.SOLID,
+        borderwidth=1,
+        padx=6,
+        pady=4,
+        bg="#fff8dc",
+        justify=tk.LEFT,
+    )
+    tooltip_label.pack()
+
+    def _hide_tooltip():
+        try:
+            tooltip_win.withdraw()
+        except Exception:
+            pass
+
+    def _on_hover_corte(event):
+        if event.inaxes != ax_corte:
+            _hide_tooltip()
+            return
+        pts_hover = getattr(ax_corte, "_shear_hover_points", None) or []
+        if not pts_hover:
+            _hide_tooltip()
+            return
+        mx, my = float(event.x), float(event.y)
+        best = None
+        best_d = 28.0
+        for p in pts_hover:
+            wx, wy, wz = p["pos"]
+            pr = _world_to_canvas_pixels_3d(ax_corte, wx, wy, wz)
+            if pr is None:
+                continue
+            px, py = float(pr[0]), float(pr[1])
+            d = float(np.hypot(px - mx, py - my))
+            if d < best_d:
+                best_d = d
+                best = p
+        if best is None:
+            _hide_tooltip()
+            return
+
+        tooltip_label.config(
+            text=(
+            f"Barra {best['bar_id']} | x_local = {best['x_local']:.2f} cm | "
+            f"V_y = {best['vy']:.6g} (local)"
+            )
+        )
+        x_root = int(root.winfo_pointerx()) + 14
+        y_root = int(root.winfo_pointery()) + 14
+        tooltip_win.geometry(f"+{x_root}+{y_root}")
+        tooltip_win.deiconify()
+        tooltip_win.lift()
+
+    def _on_leave_hover(_event=None):
+        _hide_tooltip()
+
+    canvas_corte.mpl_connect("motion_notify_event", _on_hover_corte)
+    canvas_corte.mpl_connect("axes_leave_event", _on_leave_hover)
 
     canvas_corte.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     bar_corte = ttk.Frame(tab_corte)
