@@ -1,0 +1,31 @@
+{
+  "materials": {
+    "default": {
+      "E": 20000,
+      "A": 100,
+      "I_y": 833,
+      "I_z": 833,
+      "G": 7720,
+      "J": 1408
+    }
+  },
+  "default_material": "default",
+  "nodes": [
+    { "id": 1, "x": 0, "y": 200, "z": 0, "fix": [true, true, true, false, false, false] },
+    { "id": 2, "x": 0, "y": 200, "z": 300, "fix": [false, false, false, false, false, false] },
+    { "id": 3, "x": 100, "y": 200, "z": 0, "fix": [false, false, true, false, false, false] },
+    { "id": 4, "x": 100, "y": 200, "z": 300, "fix": [false, false, false, false, false, false] },
+    { "id": 5, "x": 100, "y": 0, "z": 300, "fix": [true, true, true, true, true, true] }
+  ],
+  "bars": [
+    { "id": 1, "i": 1, "j": 2 },
+    { "id": 2, "i": 3, "j": 4 },
+    { "id": 3, "i": 4, "j": 5 },
+    { "id": 4, "i": 2, "j": 4 }
+  ],
+  "loads_point": [
+    { "bar_id": 3, "x": 100, "y": 100, "z": 300, "Fz": -5 },
+    { "bar_id": 2, "x": 100, "y": 200, "z": 150, "Fy": -5 },
+    { "bar_id": 4, "x": 50, "y": 200, "z": 300, "Fz": -10 }
+  ]
+}

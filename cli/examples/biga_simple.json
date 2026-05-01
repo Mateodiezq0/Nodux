@@ -1,0 +1,15 @@
+{
+  "materials": {
+    "default": { "E": 21000, "A": 80, "I_y": 600, "I_z": 600, "G": 8000, "J": 1000 }
+  },
+  "nodes": [
+    { "id": 1, "x": 0, "y": 0, "z": 0, "fix": [true, true, true, true, true, true] },
+    { "id": 2, "x": 400, "y": 0, "z": 0, "fix": [false, false, false, false, false, false] }
+  ],
+  "bars": [
+    { "id": 1, "i": 1, "j": 2 }
+  ],
+  "loads_point": [
+    { "bar_id": 1, "x": 200, "y": 0, "z": 0, "force_global": [0, 0, -10] }
+  ]
+}
