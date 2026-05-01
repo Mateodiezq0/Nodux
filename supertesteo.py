@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -581,6 +582,49 @@ if __name__ == "__main__":
                     )
                 except Exception as e:
                     print(f"[AVISO] No se pudieron mostrar los dibujos matplotlib: {e}")
+
+                # PyVista + export .vtm para ParaView (opcional: HYPERSTATIC_PYVISTA=1)
+                _pv = os.environ.get("HYPERSTATIC_PYVISTA", "").strip().lower()
+                if _pv in ("1", "true", "yes", "on"):
+                    try:
+                        from plot.pyvista_pestanas import (
+                            export_paraview_todo,
+                            mostrar_dibujos_pyvista_pestanas,
+                        )
+
+                        vtm_path = Path(__file__).parent / "supertesteo_paraview_todo.vtm"
+                        print("\nExportando MultiBlock VTK completo para ParaView...")
+                        export_paraview_todo(
+                            vtm_path,
+                            estructura.nodos,
+                            estructura.barras,
+                            nodos_dict,
+                            cargas_nodales=getattr(estructura, "cargas_nodales", None) or [],
+                            ipn_dims={"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0},
+                            escala_seccion=1.0,
+                            escala_diagrama=1.0,
+                            longitud_vector=45.0,
+                        )
+                        print(f"[OK] Archivo (y bloques asociados): {vtm_path}")
+                        print("  Abrí el .vtm en ParaView: File - Open - elegir supertesteo_paraview_todo.vtm")
+
+                        print("\nAbriendo ventana PyVista con pestañas (todas las vistas)...")
+                        mostrar_dibujos_pyvista_pestanas(
+                            estructura.nodos,
+                            estructura.barras,
+                            nodos_dict,
+                            cargas_nodales=getattr(estructura, "cargas_nodales", None) or [],
+                            ipn_dims={"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0},
+                            escala_seccion=1.0,
+                            mostrar_ejes_locales=True,
+                            longitud_vector=45.0,
+                            escala_diagrama_corte=1.0,
+                            desplazamientos=getattr(estructura, "desplazamientos", None),
+                        )
+                    except ImportError as ie:
+                        print(f"[AVISO] PyVista no disponible: {ie}")
+                    except Exception as e:
+                        print(f"[AVISO] PyVista/ParaView export: {e}")
         except Exception as e:
             print(f"\nERROR al generar visualización: {e}")
             import traceback

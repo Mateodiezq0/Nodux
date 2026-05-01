@@ -66,18 +66,26 @@ def _cargar_datos():
     return nodos, nodos_dict, barras
 
 
-def obtener_coordenadas_barra(barra, nodos_dict: Dict):
-    """Obtiene las coordenadas de inicio y fin de una barra"""
-    # Primero intentar usar los objetos nodo directamente si están disponibles
-    if hasattr(barra, 'nodo_i_obj') and barra.nodo_i_obj is not None:
-        nodo_i = barra.nodo_i_obj
-    else:
+def obtener_coordenadas_barra(barra, nodos_dict: Dict, solo_nodos_dict: bool = False):
+    """Obtiene las coordenadas de inicio y fin de una barra.
+
+    Si ``solo_nodos_dict`` es True, ignora ``nodo_i_obj`` / ``nodo_f_obj`` y usa solo
+    ``nodos_dict`` (útil para proxies con coordenadas deformadas).
+    """
+    if solo_nodos_dict:
         nodo_i = nodos_dict.get(barra.nodo_i)
-    
-    if hasattr(barra, 'nodo_f_obj') and barra.nodo_f_obj is not None:
-        nodo_f = barra.nodo_f_obj
-    else:
         nodo_f = nodos_dict.get(barra.nodo_f)
+    else:
+        # Primero intentar usar los objetos nodo directamente si están disponibles
+        if hasattr(barra, 'nodo_i_obj') and barra.nodo_i_obj is not None:
+            nodo_i = barra.nodo_i_obj
+        else:
+            nodo_i = nodos_dict.get(barra.nodo_i)
+
+        if hasattr(barra, 'nodo_f_obj') and barra.nodo_f_obj is not None:
+            nodo_f = barra.nodo_f_obj
+        else:
+            nodo_f = nodos_dict.get(barra.nodo_f)
     
     if nodo_i is None or nodo_f is None:
         # Si no hay objetos nodo, intentar usar los IDs directamente
