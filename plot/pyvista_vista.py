@@ -252,6 +252,7 @@ def build_ipn_mesh(
     coord_nodos_dict: Optional[Dict[Any, Any]] = None,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> "pv.PolyData":
     """Malla cerrada de perfiles IPN (prismas), misma convención que ``_dibujo_geometria_estructura``."""
     _require_pyvista()
@@ -308,6 +309,12 @@ def build_ipn_mesh(
             y_local = y_local / max(np.linalg.norm(y_local), 1e-12)
             z_local = z_local / max(np.linalg.norm(z_local), 1e-12)
 
+        pts_prof = None
+        if profile_polygon_yz_per_bar_id is not None and bid_int is not None:
+            raw_poly = profile_polygon_yz_per_bar_id.get(bid_int)
+            if raw_poly is not None:
+                pts_prof = np.asarray(raw_poly, dtype=float)
+
         custom_ipn = (
             ipn_dims_per_bar_id is not None
             and bid_int is not None
@@ -315,6 +322,19 @@ def build_ipn_mesh(
         )
         if custom_ipn:
             dims_src = ipn_dims_per_bar_id[bid_int]
+        elif (
+            pts_prof is not None
+            and pts_prof.ndim == 2
+            and pts_prof.shape[0] >= 3
+            and pts_prof.shape[1] >= 2
+        ):
+            from plot.profile_extrude import extrude_polygon_yz_prism
+
+            P = pts_prof[:, :2] * float(escala_seccion)
+            mesh_p = extrude_polygon_yz_prism(P, L, origin, x_local, y_local, z_local)
+            if mesh_p.n_points > 0:
+                meshes.append(mesh_p)
+            continue
         elif (
             bid_int is not None
             and tube_outer_radius_per_bar_id is not None

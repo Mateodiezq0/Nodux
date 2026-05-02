@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -225,6 +226,19 @@ def _default_spec() -> Dict[str, Any]:
 
 IPN_DEFAULT = {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
 
+# Títulos cortos para pestañas del visor de resultados (mismas claves que ``cli/resultados_export``).
+_RESULTADOS_TAB_TITLES = {
+    "reacciones_de_estructura_Globales": "Reacciones globales",
+    "F_interna_Locales": "F internas locales",
+    "Desplazamientos_globales_D": "Desplazamientos D",
+    "Sistema_reducido_Kll_Fl": "Sistema reducido Kll, Fl",
+    "Cargas_Globales_en_nudos": "Cargas en nudos",
+    "reacciones_locales_de_empotramiento": "Reacc. locales empotr.",
+    "Vector_Nodal_Equivalente": "Vector nodal equivalente",
+    "Ejes_Locales": "Ejes locales",
+    "Matriz_Rotacion_T": "Matriz T (12×12)",
+}
+
 
 def _msg_yes_no_flags(MB: Any) -> Any:
     SB = getattr(MB, "StandardButton", None)
@@ -420,9 +434,18 @@ class FtoolMainWindow(_QMainWindow):
             self._spec = _default_spec()
         self.setWindowTitle(titulo)
         self.resize(1280, 780)
+        self._qt_backend = backend
         self._estructura: Optional[Estructura] = None
         self._solved = False
+        self._F_internas: Optional[List[Any]] = None
+        self._cached_resultados_dfs: Optional[Dict[str, Any]] = None
+        self._resultados_sheet_key_order: List[str] = []
         self._hover_state: Dict[str, Any] = {"hover": []}
+        self._selected_bar_id: Optional[int] = None
+        self._viz_bb: Any = None
+        self._viz_nodos_dict: Optional[Dict[Any, Any]] = None
+        self._viz_hr: Optional[float] = None
+        self._ftool_preserve_camera = False
         self._escala_diagrama = 1.0
         self._escala_deform = 1.0
         self._ipn_dims = IPN_DEFAULT.copy()
@@ -592,16 +615,63 @@ class FtoolMainWindow(_QMainWindow):
         tb.addWidget(sep2)
         tb.addLayout(row3)
 
-        lay.addWidget(toolbar, 0)
+        view_3d = QWidget(central)
+        lay_3d = QVBoxLayout(view_3d)
+        lay_3d.setContentsMargins(0, 0, 0, 0)
+        lay_3d.setSpacing(6)
+        lay_3d.addWidget(toolbar, 0)
 
-        self._plotter = QtInteractor(central)
-        lay.addWidget(self._plotter.interactor, stretch=1)
+        self._plotter = QtInteractor(view_3d)
+        lay_3d.addWidget(self._plotter.interactor, stretch=1)
+
+        self._wrap_resultados = QWidget(central)
+        rl = QVBoxLayout(self._wrap_resultados)
+        rl.setContentsMargins(4, 4, 4, 4)
+        rl.setSpacing(6)
+        res_tb = QHBoxLayout()
+        self._btn_res_refresh = QPushButton("Actualizar tablas")
+        self._btn_res_refresh.setToolTip("Recargar desde el último análisis")
+        self._btn_res_export = QPushButton("Exportar como…")
+        self._btn_res_export.setToolTip("Libro Excel (.xlsx), informe PDF o CSV de la hoja visible")
+        self._btn_res_csv_folder = QPushButton("Exportar todas las hojas CSV…")
+        self._btn_res_csv_folder.setToolTip("Un archivo .csv por tabla en la carpeta elegida")
+        self._btn_res_refresh.clicked.connect(self._refresh_resultados_tables_ui)
+        self._btn_res_export.clicked.connect(self._export_resultados_dialog)
+        self._btn_res_csv_folder.clicked.connect(self._export_resultados_csv_folder)
+        res_tb.addWidget(self._btn_res_refresh)
+        res_tb.addWidget(self._btn_res_export)
+        res_tb.addWidget(self._btn_res_csv_folder)
+        res_tb.addStretch(1)
+        rl.addLayout(res_tb)
+        self._tabs_resultados_sheets = QTabWidget()
+        self._tabs_resultados_sheets.setDocumentMode(True)
+        rl.addWidget(self._tabs_resultados_sheets, stretch=1)
+
+        self._workspace_main = QTabWidget(central)
+        self._workspace_main.setDocumentMode(True)
+        # Resultados primero: la pestaña tipo Excel queda a la izquierda y siempre accesible con un clic
+        # (sin depender del menú «Resultados»). El arranque sigue en Modelo 3D (ver setCurrentIndex abajo).
+        self._IDX_WORKSPACE_RESULTADOS = 0
+        self._IDX_WORKSPACE_3D = 1
+        self._workspace_main.addTab(self._wrap_resultados, "Resultados (tablas)")
+        self._workspace_main.setTabToolTip(
+            self._IDX_WORKSPACE_RESULTADOS,
+            "Tablas numéricas al estilo Excel (mismo contenido que exportar a .xlsx)",
+        )
+        self._workspace_main.addTab(view_3d, "Modelo 3D")
+        self._workspace_main.setTabToolTip(self._IDX_WORKSPACE_3D, "Vista 3D, diagramas y deformada")
+        for i in (self._IDX_WORKSPACE_RESULTADOS, self._IDX_WORKSPACE_3D):
+            self._workspace_main.setTabEnabled(i, True)
+        self._workspace_main.setCurrentIndex(self._IDX_WORKSPACE_3D)
+        self._workspace_main.currentChanged.connect(self._on_workspace_tab_changed)
+
+        lay.addWidget(self._workspace_main, stretch=1)
 
         self._combo_vista.currentIndexChanged.connect(lambda _: self._redraw())
         self._slider_escala.valueChanged.connect(self._on_slider)
 
         self._QTableWidgetItem = QTableWidgetItem
-        dock = QDockWidget("Inspector del modelo", self)
+        self._inspector_dock = QDockWidget("Inspector del modelo", self)
         self._tabs_model = QTabWidget()
         self._tabs_model.setDocumentMode(True)
         self._tabs_model.setMovable(False)
@@ -682,12 +752,12 @@ class FtoolMainWindow(_QMainWindow):
         self._outer_inspector.addTab(model_wrap, "Modelo")
         self._outer_inspector.addTab(mat_wrap, "Materiales y secciones")
 
-        dock.setWidget(self._outer_inspector)
+        self._inspector_dock.setWidget(self._outer_inspector)
         left_dock = getattr(Qt, "LeftDockWidgetArea", None)
         if left_dock is None:
             left_dock = 1
-        self.addDockWidget(left_dock, dock)
-        dock.setMinimumWidth(460)
+        self.addDockWidget(left_dock, self._inspector_dock)
+        self._inspector_dock.setMinimumWidth(460)
 
         self._tbl_materials.customContextMenuRequested.connect(self._materials_context_menu)
         self._tbl_materials.itemDoubleClicked.connect(self._on_materials_double_clicked)
@@ -704,6 +774,7 @@ class FtoolMainWindow(_QMainWindow):
 
         self._tbl_nodes.itemDoubleClicked.connect(self._on_nodes_table_double_clicked)
         self._tbl_bars.itemDoubleClicked.connect(self._on_bars_table_double_clicked)
+        self._tbl_bars.itemSelectionChanged.connect(self._on_bars_table_selection_changed)
         self._tbl_loads.itemDoubleClicked.connect(self._on_loads_table_double_clicked)
 
         self._legend_status = QLabel("")
@@ -722,6 +793,16 @@ class FtoolMainWindow(_QMainWindow):
         act_open.triggered.connect(self._open_json)
         act_save = menu.addAction("Guardar JSON...")
         act_save.triggered.connect(self._save_json)
+        act_png = menu.addAction("Exportar vista PNG (informe)...")
+        act_png.triggered.connect(self._export_viewport_png)
+
+        menu_res = self.menuBar().addMenu("Resultados")
+        act_res_tab = menu_res.addAction("Abrir pestaña Resultados")
+        act_res_tab.setToolTip("Visor tipo Excel: tablas del último análisis")
+        act_res_tab.triggered.connect(self._show_resultados_tab)
+        act_res_export = menu_res.addAction("Exportar como…")
+        act_res_export.setToolTip("Excel, PDF o CSV de la hoja visible")
+        act_res_export.triggered.connect(self._export_resultados_dialog)
 
         self._refresh_tree()
         self._redraw()
@@ -729,7 +810,30 @@ class FtoolMainWindow(_QMainWindow):
         try:
             from plot.pyvista_pestanas import _install_diagram_hover
 
-            _install_diagram_hover(self._plotter, lambda: self._hover_state.get("hover") or [], "vy")
+            _install_diagram_hover(
+                self._plotter,
+                lambda: self._hover_state.get("hover") or [],
+                lambda: str(self._combo_vista.currentData() or "vy"),
+            )
+        except Exception:
+            pass
+
+        try:
+            if backend == "PySide6":
+                from PySide6.QtGui import QKeySequence, QShortcut
+            else:
+                from PyQt5.QtGui import QKeySequence
+                from PyQt5.QtWidgets import QShortcut
+
+            _esc_sc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+            try:
+                _esc_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            except AttributeError:
+                try:
+                    _esc_sc.setContext(Qt.WindowShortcut)
+                except Exception:
+                    pass
+            _esc_sc.activated.connect(self._on_escape_deselect_bar)
         except Exception:
             pass
 
@@ -737,6 +841,9 @@ class FtoolMainWindow(_QMainWindow):
             self.statusBar().showMessage(
                 "Ejemplo supertesteo: 5 nodos, 4 barras, 3 cargas (equivalente a crear_estructura_supertesteo)."
             )
+
+        self._on_workspace_tab_changed(self._workspace_main.currentIndex())
+        self._refresh_resultados_tables_ui()
 
     def _apply_ftool_theme(self) -> None:
         self.setStyleSheet(_FTOOL_STYLESHEET)
@@ -751,6 +858,230 @@ class FtoolMainWindow(_QMainWindow):
             self._plotter.set_background("#c9d0d9", top="#eef1f5")
         except TypeError:
             self._plotter.set_background("#dce1e8")
+
+    def _apply_ftool_plotter_camera(self, prev_cam: Any) -> None:
+        """
+        Tras ``reset_camera``: el primer dibujo encuadra toda la estructura.
+        Después se conserva la vista del usuario (antes restaurábamos la cámara
+        previa al primer cuadro y se perdía el encuadre automático).
+        """
+        restore = bool(getattr(self, "_ftool_preserve_camera", False)) and prev_cam is not None
+        if restore:
+            try:
+                self._plotter.camera_position = prev_cam
+            except Exception:
+                pass
+        else:
+            try:
+                self._plotter.camera.zoom(0.9)
+            except Exception:
+                pass
+        self._ftool_preserve_camera = True
+
+    def _on_workspace_tab_changed(self, index: int) -> None:
+        """En Resultados se oculta el inspector lateral para concentrarse en las tablas."""
+        dock = getattr(self, "_inspector_dock", None)
+        if dock is None:
+            return
+        if index == getattr(self, "_IDX_WORKSPACE_RESULTADOS", 0):
+            dock.hide()
+        else:
+            dock.show()
+
+    def _show_resultados_tab(self) -> None:
+        self._workspace_main.setCurrentIndex(self._IDX_WORKSPACE_RESULTADOS)
+        self._refresh_resultados_tables_ui()
+
+    def _refresh_resultados_tables_ui(self) -> None:
+        """Rellena las pestañas tipo Excel desde el último análisis."""
+        if self._qt_backend == "PySide6":
+            from PySide6.QtWidgets import QAbstractItemView, QTableWidget, QVBoxLayout
+        else:
+            from PyQt5.QtWidgets import QAbstractItemView, QTableWidget, QVBoxLayout
+
+        tabs = self._tabs_resultados_sheets
+        tabs.blockSignals(True)
+        tabs.clear()
+        self._resultados_sheet_key_order = []
+        try:
+            dfs = self._get_resultados_dataframes()
+            self._cached_resultados_dfs = dfs
+            if dfs is None:
+                w = self._QWidget()
+                vl = QVBoxLayout(w)
+                vl.setContentsMargins(12, 12, 12, 12)
+                msg = self._QLabel(
+                    "No hay resultados numéricos. Ejecutá Analizar con un modelo válido "
+                    "para cargar las tablas (mismo contenido que el Excel de supertesteo)."
+                )
+                msg.setObjectName("mutedLabel")
+                msg.setWordWrap(True)
+                vl.addWidget(msg)
+                tabs.addTab(w, "—")
+                return
+
+            from cli.resultados_export import RESULTADOS_SHEET_ORDER
+
+            _sel_rows = getattr(
+                QAbstractItemView.SelectionBehavior,
+                "SelectRows",
+                QAbstractItemView.SelectRows,
+            )
+            _sel_single = getattr(
+                QAbstractItemView.SelectionMode,
+                "SingleSelection",
+                QAbstractItemView.SingleSelection,
+            )
+            _no_edit = getattr(
+                QAbstractItemView.EditTrigger,
+                "NoEditTriggers",
+                QAbstractItemView.NoEditTriggers,
+            )
+
+            for key in RESULTADOS_SHEET_ORDER:
+                if key not in dfs:
+                    continue
+                df = dfs[key]
+                tbl = QTableWidget()
+                tbl.setAlternatingRowColors(True)
+                tbl.setSelectionBehavior(_sel_rows)
+                tbl.setSelectionMode(_sel_single)
+                tbl.setEditTriggers(_no_edit)
+                tbl.setShowGrid(True)
+                tbl.verticalHeader().setVisible(True)
+                tbl.verticalHeader().setDefaultSectionSize(20)
+                tbl.horizontalHeader().setStretchLastSection(True)
+                tbl.horizontalHeader().setHighlightSections(False)
+                self._populate_resultados_qtable(tbl, df)
+                title = _RESULTADOS_TAB_TITLES.get(key, key.replace("_", " "))
+                tabs.addTab(tbl, title)
+                self._resultados_sheet_key_order.append(key)
+        finally:
+            tabs.blockSignals(False)
+
+    def _populate_resultados_qtable(self, tbl: Any, df: Any) -> None:
+        import pandas as pd
+
+        tbl.clear()
+        tbl.setRowCount(len(df))
+        tbl.setColumnCount(len(df.columns))
+        tbl.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        TWI = self._QTableWidgetItem
+        _qt = self._Qt
+        if hasattr(_qt, "ItemFlag"):
+            _ro = _qt.ItemFlag.ItemIsSelectable | _qt.ItemFlag.ItemIsEnabled
+        else:
+            _ro = _qt.ItemIsSelectable | _qt.ItemIsEnabled
+        for r in range(len(df)):
+            for c in range(len(df.columns)):
+                val = df.iat[r, c]
+                if pd.isna(val):
+                    txt = ""
+                elif isinstance(val, (float, np.floating)):
+                    txt = f"{float(val):.6g}"
+                elif isinstance(val, (int, np.integer)):
+                    txt = str(int(val))
+                else:
+                    txt = str(val)
+                it = TWI(txt)
+                it.setFlags(_ro)
+                tbl.setItem(r, c, it)
+
+    def _export_resultados_dialog(self) -> None:
+        dfs = self._cached_resultados_dfs
+        if dfs is None:
+            dfs = self._get_resultados_dataframes()
+        if dfs is None:
+            self._QMessageBox.warning(self, "Exportar", "Ejecutá Analizar antes para generar resultados.")
+            return
+        self._cached_resultados_dfs = dfs
+
+        path, selected_filter = self._QFileDialog.getSaveFileName(
+            self,
+            "Exportar resultados",
+            str(_ROOT / "resultados.xlsx"),
+            "Libro Excel (*.xlsx);;Informe PDF (*.pdf);;CSV — hoja visible (*.csv)",
+        )
+        if not path:
+            return
+        pth = Path(path)
+        sel = (selected_filter or "").lower()
+        if pth.suffix == "":
+            if "pdf" in sel:
+                pth = pth.with_suffix(".pdf")
+            elif "csv" in sel:
+                pth = pth.with_suffix(".csv")
+            else:
+                pth = pth.with_suffix(".xlsx")
+        path = str(pth)
+        low = path.lower()
+        try:
+            if low.endswith(".pdf"):
+                from cli.resultados_export import write_resultados_pdf
+
+                write_resultados_pdf(pth, dfs, titulo="Hyperstatic — resultados")
+            elif low.endswith(".csv"):
+                idx = self._tabs_resultados_sheets.currentIndex()
+                keys = self._resultados_sheet_key_order
+                if idx < 0 or idx >= len(keys):
+                    self._QMessageBox.warning(
+                        self,
+                        "Exportar CSV",
+                        "Elegí una hoja en las pestañas de resultados (arriba de la tabla).",
+                    )
+                    return
+                k = keys[idx]
+                sub = dfs.get(k)
+                if sub is None:
+                    return
+                sub.to_csv(path, index=False, encoding="utf-8-sig")
+            else:
+                if not low.endswith(".xlsx"):
+                    path = str(pth.with_suffix(".xlsx"))
+                    pth = Path(path)
+                from cli.resultados_export import write_resultados_excel
+
+                write_resultados_excel(pth, dfs)
+            self.statusBar().showMessage(f"Exportado: {path}")
+        except Exception as e:
+            self._QMessageBox.critical(self, "Exportar", str(e))
+
+    def _export_resultados_csv_folder(self) -> None:
+        dfs = self._cached_resultados_dfs
+        if dfs is None:
+            dfs = self._get_resultados_dataframes()
+        if dfs is None:
+            self._QMessageBox.warning(self, "Exportar CSV", "Ejecutá Analizar antes para generar resultados.")
+            return
+        self._cached_resultados_dfs = dfs
+        folder = self._QFileDialog.getExistingDirectory(self, "Carpeta para los CSV", str(_ROOT))
+        if not folder:
+            return
+        try:
+            from cli.resultados_export import export_sheets_to_csv_folder
+
+            n = export_sheets_to_csv_folder(dfs, Path(folder))
+            self.statusBar().showMessage(f"Exportados {n} archivos CSV en: {folder}")
+        except Exception as e:
+            self._QMessageBox.critical(self, "Exportar CSV", str(e))
+
+    def _get_resultados_dataframes(self) -> Optional[Dict[str, Any]]:
+        """DataFrames equivalentes al Excel de ``supertesteo`` (requiere análisis)."""
+        if not self._solved or self._estructura is None:
+            return None
+        from cli.resultados_export import collect_resultados_dataframes
+
+        F = self._F_internas
+        if F is None:
+            try:
+                F = self._estructura.calcular_reacciones(debug=0)
+                self._F_internas = F
+            except Exception:
+                return None
+        try:
+            return collect_resultados_dataframes(self._estructura, F)
+        except Exception:
+            return None
 
     def _dialog_accepted(self, d: Any) -> bool:
         if callable(getattr(d, "exec", None)):
@@ -775,6 +1106,10 @@ class FtoolMainWindow(_QMainWindow):
     def _invalidate_solution(self) -> None:
         self._solved = False
         self._estructura = None
+        self._F_internas = None
+        self._ftool_preserve_camera = False
+        self._cached_resultados_dfs = None
+        self._refresh_resultados_tables_ui()
 
     def _refresh_tree(self) -> None:
         """Actualiza tablas del inspector (nodos, barras, cargas)."""
@@ -1020,6 +1355,26 @@ class FtoolMainWindow(_QMainWindow):
                     pass
         return out
 
+    def _profile_polygon_yz_per_bar_from_spec(self) -> Dict[int, List[List[float]]]:
+        out: Dict[int, List[List[float]]] = {}
+        mats = self._spec.get("materials") or {}
+        from cli.profile_polygon import normalize_polygon_yz
+
+        for br in self._spec.get("bars") or []:
+            if br.get("id") is None:
+                continue
+            bid = int(br["id"])
+            mk = str(br.get("material") or "default")
+            m = mats.get(mk) or {}
+            vz = m.get("viz")
+            if isinstance(vz, dict) and not vz.get("use_global", True):
+                if all(k in vz for k in ("h", "b", "tw", "tf")):
+                    continue
+            poly = normalize_polygon_yz(m.get("profile_polygon_yz"))
+            if poly:
+                out[bid] = poly
+        return out
+
     def _dlg_material_editor(self, edit_name: Optional[str]) -> None:
         """edit_name None = nuevo material."""
         from cli.loader import _resolve_material_stiffness
@@ -1027,8 +1382,17 @@ class FtoolMainWindow(_QMainWindow):
         mats = self._spec.setdefault("materials", {})
         D = self._QDialog(self)
         D.setWindowTitle("Editar material" if edit_name else "Nuevo material")
-        D.setMinimumWidth(560)
-        form = self._QFormLayout(D)
+        D.setMinimumWidth(820)
+        try:
+            from PySide6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout
+        except ImportError:
+            from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout
+
+        root_lay = QVBoxLayout(D)
+        main_h = QHBoxLayout()
+        left_w = self._QWidget()
+        left_w.setMinimumWidth(340)
+        form = self._QFormLayout(left_w)
         SW = self._QStackedWidget
         W = self._QWidget
 
@@ -1039,6 +1403,10 @@ class FtoolMainWindow(_QMainWindow):
         form.addRow("Nombre (clave)", name_edit)
 
         existing = dict(mats.get(edit_name, {})) if edit_name else {}
+        from cli.profile_polygon import normalize_polygon_yz as _norm_poly, polygon_area_yz as _poly_area
+
+        _mp_load = _norm_poly(existing.get("profile_polygon_yz"))
+        manual_poly_state: List[List[float]] = [list(p) for p in _mp_load] if _mp_load else []
 
         s_e = self._QDoubleSpinBox()
         s_e.setRange(1.0, 1e9)
@@ -1200,9 +1568,11 @@ class FtoolMainWindow(_QMainWindow):
         fp.addRow("Forma", sec_type)
         fp.addRow(sec_stack)
 
-        # --- página manual ---
+        # --- página manual (solo propiedades; el dibujo va en el panel derecho) ---
         page_m = W()
-        fm = self._QFormLayout(page_m)
+        vm = QVBoxLayout(page_m)
+        fw_man = W()
+        fm = self._QFormLayout(fw_man)
         sA = self._QDoubleSpinBox()
         sA.setRange(1e-12, 1e9)
         sA.setValue(float(existing.get("A", 100)))
@@ -1227,16 +1597,42 @@ class FtoolMainWindow(_QMainWindow):
         fm.addRow("I_z (cm⁴)", sIz)
         fm.addRow("J (cm⁴)", sJ)
         fm.addRow("G (Tn/cm²); si 0 se usa ν", sG)
+        vm.addWidget(fw_man)
+        vm.addStretch(0)
 
         stack.addWidget(page_p)
         stack.addWidget(page_m)
+        try:
+            stack.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        except AttributeError:
+            stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        manual_draw_panel = None
 
         def _sync_mode(i: int) -> None:
             stack.setCurrentIndex(0 if i == 0 else 1)
+            if manual_draw_panel is not None:
+                manual_draw_panel.setVisible(i == 1)
 
-        mode.currentIndexChanged.connect(_sync_mode)
-        _sync_mode(mode.currentIndex())
         form.addRow(stack)
+
+        manual_ax = None
+        manual_canvas = None
+        _ManFigCanvas = None
+        try:
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _ManFigCanvas
+        except ImportError:
+            try:
+                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _ManFigCanvas
+            except ImportError:
+                pass
+
+        right_w = W()
+        rv = QVBoxLayout(right_w)
+        rv.setSpacing(8)
+        lbl_prev_side = self._QLabel("Previsualización")
+        lbl_prev_side.setObjectName("mutedLabel")
+        rv.addWidget(lbl_prev_side)
 
         preview_canvas = None
         preview_fig = None
@@ -1256,12 +1652,129 @@ class FtoolMainWindow(_QMainWindow):
 
             from cli.section_preview import draw_material_preview
 
-            preview_fig = Figure(figsize=(4.2, 5.0), dpi=96)
+            preview_fig = Figure(figsize=(4.2, 4.6), dpi=96)
             preview_canvas = _FigCanvas(preview_fig)
-            preview_canvas.setMinimumHeight(320)
-            preview_canvas.setSizePolicy(_QSP.Expanding, _QSP.MinimumExpanding)
+            preview_canvas.setMinimumWidth(300)
+            preview_canvas.setMinimumHeight(260)
+            preview_canvas.setMaximumHeight(420)
+            preview_canvas.setSizePolicy(_QSP.Preferred, _QSP.Preferred)
+            rv.addWidget(preview_canvas)
         except ImportError:
             pass
+
+        manual_draw_panel = W()
+        md_lay = QVBoxLayout(manual_draw_panel)
+        lbl_draw = self._QLabel(
+            "Dibujo de perfil (Y–Z, cm): clic izq. = vértice, clic der. = borrar último."
+        )
+        lbl_draw.setWordWrap(True)
+        md_lay.addWidget(lbl_draw)
+
+        if _ManFigCanvas is not None:
+            from matplotlib.figure import Figure as _ManFigure
+
+            _mfig = _ManFigure(figsize=(4.0, 3.6), dpi=96)
+            manual_canvas = _ManFigCanvas(_mfig)
+            manual_ax = _mfig.add_subplot(111)
+            manual_canvas.setMinimumHeight(220)
+            manual_canvas.setMaximumHeight(320)
+            md_lay.addWidget(manual_canvas)
+
+        row_man = QHBoxLayout()
+        btn_poly_clear = QPushButton("Limpiar perfil")
+        btn_poly_area = QPushButton("Estimar A desde polígono")
+        row_man.addWidget(btn_poly_clear)
+        row_man.addWidget(btn_poly_area)
+        md_lay.addLayout(row_man)
+
+        manual_draw_panel.setVisible(mode.currentIndex() == 1)
+        rv.addWidget(manual_draw_panel)
+
+        main_h.addWidget(left_w, stretch=52)
+        main_h.addWidget(right_w, stretch=48)
+        root_lay.addLayout(main_h)
+
+        mode.currentIndexChanged.connect(_sync_mode)
+        _sync_mode(mode.currentIndex())
+
+        def _manual_axes_limits_yz(
+            arr: np.ndarray,
+        ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+            """
+            Encuadre cuadrado en Y–Z con radio mínimo (cm) para que el primer clic
+            no encoja la vista a pocos milímetros.
+            """
+            min_radius = 12.0
+            margin = 1.08
+            if arr.size == 0:
+                return (-25.0, 25.0), (-25.0, 25.0)
+            x0, x1 = float(np.min(arr[:, 0])), float(np.max(arr[:, 0]))
+            y0, y1 = float(np.min(arr[:, 1])), float(np.max(arr[:, 1]))
+            cx = 0.5 * (x0 + x1)
+            cy = 0.5 * (y0 + y1)
+            half_x = max(0.5 * (x1 - x0), min_radius)
+            half_y = max(0.5 * (y1 - y0), min_radius)
+            r = max(half_x, half_y) * margin
+            return (cx - r, cx + r), (cy - r, cy + r)
+
+        def redraw_manual_canvas() -> None:
+            if manual_ax is None or manual_canvas is None:
+                return
+            manual_ax.clear()
+            manual_ax.set_facecolor("#ececec")
+            manual_ax.grid(True, linestyle=":", alpha=0.6)
+            manual_ax.set_xlabel("Y local (cm)")
+            manual_ax.set_ylabel("Z local (cm)")
+            manual_ax.set_title("Dibujo de sección", fontsize=9, color="#2c3e50")
+            if manual_poly_state:
+                arr = np.asarray(manual_poly_state, dtype=float)
+                if arr.shape[0] >= 1:
+                    manual_ax.plot(
+                        arr[:, 0], arr[:, 1], "o", color="#1b4f72", ms=7, zorder=3
+                    )
+                if arr.shape[0] >= 2:
+                    manual_ax.plot(
+                        arr[:, 0], arr[:, 1], "-", color="#1b4f72", lw=1.4, zorder=2
+                    )
+                if arr.shape[0] >= 3:
+                    cl = np.vstack([arr, arr[:1]])
+                    manual_ax.fill(cl[:, 0], cl[:, 1], alpha=0.35, color="#7fb3d5", zorder=1)
+                xlim, ylim = _manual_axes_limits_yz(arr)
+                manual_ax.set_xlim(xlim)
+                manual_ax.set_ylim(ylim)
+            else:
+                manual_ax.set_xlim(-25, 25)
+                manual_ax.set_ylim(-25, 25)
+            manual_ax.set_aspect("equal", adjustable="box")
+            manual_canvas.draw()
+
+        def on_manual_canvas_click(event: Any) -> None:
+            if manual_ax is None or getattr(event, "inaxes", None) != manual_ax:
+                return
+            if event.xdata is None or event.ydata is None:
+                return
+            if event.button == 1:
+                manual_poly_state.append([float(event.xdata), float(event.ydata)])
+            elif event.button == 3:
+                if manual_poly_state:
+                    manual_poly_state.pop()
+            redraw_manual_canvas()
+            _refresh_material_preview()
+
+        def _clear_manual_poly() -> None:
+            manual_poly_state.clear()
+            redraw_manual_canvas()
+            _refresh_material_preview()
+
+        def _estimate_a_from_poly() -> None:
+            a = _poly_area(manual_poly_state)
+            if a > 1e-18:
+                sA.setValue(a)
+
+        btn_poly_clear.clicked.connect(_clear_manual_poly)
+        btn_poly_area.clicked.connect(_estimate_a_from_poly)
+        if manual_canvas is not None:
+            manual_canvas.mpl_connect("button_press_event", on_manual_canvas_click)
 
         def _refresh_material_preview(*_: Any) -> None:
             if preview_fig is None or preview_canvas is None:
@@ -1286,11 +1799,13 @@ class FtoolMainWindow(_QMainWindow):
                 viz_b=float(vb.value()),
                 viz_tw=float(vtw.value()),
                 viz_tf=float(vtf.value()),
+                manual_polygon_yz=list(manual_poly_state)
+                if mode.currentIndex() == 1
+                else None,
             )
             preview_canvas.draw()
 
         if preview_canvas is not None:
-            form.addRow("Previsualización", preview_canvas)
             _spin_refresh = (
                 sb,
                 sh,
@@ -1307,6 +1822,10 @@ class FtoolMainWindow(_QMainWindow):
                 vb,
                 vtw,
                 vtf,
+                sA,
+                sIy,
+                sIz,
+                sJ,
             )
             for _sp in _spin_refresh:
                 _sp.valueChanged.connect(_refresh_material_preview)
@@ -1314,10 +1833,11 @@ class FtoolMainWindow(_QMainWindow):
             mode.currentIndexChanged.connect(_refresh_material_preview)
             chk_viz_global.toggled.connect(_refresh_material_preview)
             _refresh_material_preview()
+        redraw_manual_canvas()
 
         DBB = self._QDialogButtonBox
         bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
-        form.addRow(bb)
+        root_lay.addWidget(bb)
         bb.accepted.connect(D.accept)
         bb.rejected.connect(D.reject)
         if self._dialog_accepted(D) is False:
@@ -1345,6 +1865,7 @@ class FtoolMainWindow(_QMainWindow):
         is_param = mode.currentIndex() == 0
 
         if is_param:
+            entry.pop("profile_polygon_yz", None)
             entry["nu"] = s_nu.value()
             idx = sec_type.currentIndex()
             sec_stack.setCurrentIndex(idx)
@@ -1373,6 +1894,7 @@ class FtoolMainWindow(_QMainWindow):
                 self._QMessageBox.critical(self, "Material", str(ex))
                 return
         else:
+            entry.pop("section", None)
             entry["A"] = sA.value()
             entry["I_y"] = sIy.value()
             entry["I_z"] = sIz.value()
@@ -1382,6 +1904,11 @@ class FtoolMainWindow(_QMainWindow):
                 entry["G"] = Gv
             else:
                 entry["nu"] = s_nu.value()
+            pp_save = _norm_poly(manual_poly_state)
+            if pp_save:
+                entry["profile_polygon_yz"] = pp_save
+            else:
+                entry.pop("profile_polygon_yz", None)
             try:
                 _resolve_material_stiffness(dict(entry), nm)
             except Exception as ex:
@@ -1506,6 +2033,86 @@ class FtoolMainWindow(_QMainWindow):
         row = item.row()
         self._dlg_edit_load(row)
 
+    def _export_viewport_png(self) -> None:
+        """PNG fijo para informes (1920×1080); conserva la vista actual."""
+        path, _ = self._QFileDialog.getSaveFileName(
+            self,
+            "Exportar vista PNG",
+            str(_ROOT),
+            "PNG (*.png)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        w, h = 1920, 1080
+        try:
+            self._plotter.screenshot(path, return_img=False, window_size=(w, h))
+            self.statusBar().showMessage(f"Vista exportada {w}×{h} px → {path}")
+        except Exception as e:
+            self._QMessageBox.warning(self, "Exportar PNG", str(e))
+
+    def _cache_viz_highlight_params(self, bb: Any, nodos_dict: Dict[Any, Any], hr: float) -> None:
+        """Copia de barras/nodos y radio para actualizar solo el tubo naranja sin redibujar todo."""
+        self._viz_bb = bb
+        self._viz_nodos_dict = nodos_dict
+        self._viz_hr = float(hr)
+
+    def _update_bar_highlight_only(self) -> None:
+        """Quita y vuelve a dibujar el actor ``ftool_bar_highlight`` sin ``plotter.clear()``."""
+        from plot.pyvista_pestanas import add_ftool_bar_selection_highlight
+
+        bb = self._viz_bb
+        nod = self._viz_nodos_dict
+        hr = self._viz_hr
+        if bb is None or nod is None or hr is None:
+            self._redraw()
+            return
+        try:
+            self._plotter.remove_actor("ftool_bar_highlight", reset_camera=False, render=False)
+        except Exception:
+            pass
+        add_ftool_bar_selection_highlight(self._plotter, bb, nod, self._selected_bar_id, hr)
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
+
+    def _on_escape_deselect_bar(self) -> None:
+        if self._selected_bar_id is None:
+            return
+        self._clear_bar_selection()
+
+    def _clear_bar_selection(self) -> None:
+        """Quita el resaltado 3D y la selección en la tabla Barras."""
+        prev = self._selected_bar_id
+        self._tbl_bars.blockSignals(True)
+        try:
+            self._selected_bar_id = None
+            self._tbl_bars.clearSelection()
+        finally:
+            self._tbl_bars.blockSignals(False)
+        if prev is not None:
+            self._update_bar_highlight_only()
+
+    def _on_bars_table_selection_changed(self) -> None:
+        sm = self._tbl_bars.selectionModel()
+        if sm is None:
+            return
+        rows = sm.selectedRows()
+        bid: Optional[int] = None
+        if rows:
+            it = self._tbl_bars.item(rows[0].row(), 0)
+            if it is not None:
+                try:
+                    bid = int(it.text())
+                except ValueError:
+                    bid = None
+        if bid == self._selected_bar_id:
+            return
+        self._selected_bar_id = bid
+        self._update_bar_highlight_only()
+
     def _build_est_preview(self) -> Estructura:
         return build_estructura_from_spec(self._spec)
 
@@ -1519,10 +2126,19 @@ class FtoolMainWindow(_QMainWindow):
             _populate_mx,
             _populate_my,
             _populate_mz,
+            add_ftool_bar_selection_highlight,
+            add_ftool_viewport_legend,
+            ftool_selection_highlight_radius,
         )
 
         key = self._combo_vista.currentData()
         esc = self._escala_actual()
+        prev_cam = None
+        if getattr(self, "_ftool_preserve_camera", False):
+            try:
+                prev_cam = self._plotter.camera_position
+            except Exception:
+                pass
         self._plotter.clear()
         self._hover_state["hover"] = []
         self._legend_status.setText("")
@@ -1545,6 +2161,7 @@ class FtoolMainWindow(_QMainWindow):
         cargas_nodales = getattr(est, "cargas_nodales", None) or []
         per_bar = self._ipn_dims_per_bar_from_spec()
         tube_bar = self._tube_outer_radius_per_bar_from_spec()
+        profile_bar = self._profile_polygon_yz_per_bar_from_spec()
 
         if key == "geom":
             _populate_estructura(
@@ -1558,6 +2175,7 @@ class FtoolMainWindow(_QMainWindow):
                 self._longitud_vector,
                 ipn_dims_per_bar_id=per_bar,
                 tube_outer_radius_per_bar_id=tube_bar,
+                profile_polygon_yz_per_bar_id=profile_bar,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -1575,6 +2193,7 @@ class FtoolMainWindow(_QMainWindow):
                 1e-9,
                 ipn_dims_per_bar_id=per_bar,
                 tube_outer_radius_per_bar_id=tube_bar,
+                profile_polygon_yz_per_bar_id=profile_bar,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -1592,11 +2211,27 @@ class FtoolMainWindow(_QMainWindow):
                     self._longitud_vector,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
                 add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
                 did_overlay = True
                 _finish_plotter(self._plotter)
+                self._apply_ftool_plotter_camera(prev_cam)
                 self._apply_viewport_background()
+                hr0 = ftool_selection_highlight_radius(
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
+                )
+                add_ftool_viewport_legend(self._plotter, key, esc)
+                add_ftool_bar_selection_highlight(
+                    self._plotter, bb, nodos_dict, self._selected_bar_id, hr0
+                )
+                self._cache_viz_highlight_params(bb, nodos_dict, hr0)
                 self._legend_status.setText(NODOS_LEGEND_STATUS if did_overlay else "")
                 return
             nb = self._estructura.nodos
@@ -1616,6 +2251,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "vy":
                 self._hover_state["hover"] = _populate_corte(
@@ -1629,6 +2265,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "vz":
                 self._hover_state["hover"] = _populate_corte(
@@ -1642,6 +2279,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "nx":
                 self._hover_state["hover"] = _populate_corte(
@@ -1655,6 +2293,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "my":
                 self._hover_state["hover"] = _populate_my(
@@ -1667,6 +2306,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "mz":
                 self._hover_state["hover"] = _populate_mz(
@@ -1679,6 +2319,7 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             elif key == "mx":
                 self._hover_state["hover"] = _populate_mx(
@@ -1691,23 +2332,40 @@ class FtoolMainWindow(_QMainWindow):
                     esc,
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
+                    profile_polygon_yz_per_bar_id=profile_bar,
                 )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
         _finish_plotter(self._plotter)
+        self._apply_ftool_plotter_camera(prev_cam)
         self._apply_viewport_background()
+        hr = ftool_selection_highlight_radius(
+            bb,
+            nodos_dict,
+            self._ipn_dims,
+            1.0,
+            ipn_dims_per_bar_id=per_bar,
+            tube_outer_radius_per_bar_id=tube_bar,
+            profile_polygon_yz_per_bar_id=profile_bar,
+        )
+        add_ftool_viewport_legend(self._plotter, key, esc)
+        add_ftool_bar_selection_highlight(
+            self._plotter, bb, nodos_dict, self._selected_bar_id, hr
+        )
+        self._cache_viz_highlight_params(bb, nodos_dict, hr)
         self._legend_status.setText(NODOS_LEGEND_STATUS if did_overlay else "")
         self.statusBar().showMessage("OK")
 
     def _on_analyze(self) -> None:
         try:
             est = build_estructura_from_spec(self._spec)
-            solve_estructura(est)
+            self._F_internas = solve_estructura(est)
         except Exception as e:
             self._QMessageBox.critical(self, "Analisis", str(e))
             return
         self._estructura = est
         self._solved = True
+        self._refresh_resultados_tables_ui()
         self._QMessageBox.information(self, "Analisis", "Sistema resuelto. Elegi vista de esfuerzos o deformada.")
         self._redraw()
 

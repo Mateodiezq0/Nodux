@@ -14,7 +14,7 @@ import sys
 import time
 import types
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -91,6 +91,7 @@ def build_ipn_mesh_deformada_curva(
     *,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> "pv.PolyData":
     """
     Malla IPN siguiendo el eje deformado (Bernoulli: axial + Hermite en y/z local según K_local).
@@ -143,6 +144,12 @@ def build_ipn_mesh_deformada_curva(
             dloc = _centroid_disp_local_bern(float(xk), Lbar, ul)
             poly.append(r0 + R.T @ dloc)
         poly_a = np.array(poly, dtype=float)
+        pts_prof = None
+        if profile_polygon_yz_per_bar_id is not None and bid_int is not None:
+            raw_poly = profile_polygon_yz_per_bar_id.get(bid_int)
+            if raw_poly is not None:
+                pts_prof = np.asarray(raw_poly, dtype=float)
+
         custom_ipn = (
             ipn_dims_per_bar_id is not None
             and bid_int is not None
@@ -152,6 +159,28 @@ def build_ipn_mesh_deformada_curva(
             h, b, tw, tf = _dims_perfil_ipn(
                 ipn_dims_per_bar_id[bid_int], escala_seccion
             )
+        elif (
+            pts_prof is not None
+            and pts_prof.ndim == 2
+            and pts_prof.shape[0] >= 3
+            and pts_prof.shape[1] >= 2
+        ):
+            from plot.profile_extrude import extrude_polygon_yz_prism
+
+            P = pts_prof[:, :2] * float(escala_seccion)
+            for seg in range(ns):
+                origin = poly_a[seg]
+                vend = poly_a[seg + 1] - origin
+                Lseg = float(np.linalg.norm(vend))
+                if Lseg < 1e-10:
+                    continue
+                x_loc, y_loc, z_loc = _terna_seccion_desde_cuerda(vend, y_ref, z_ref)
+                mseg = extrude_polygon_yz_prism(
+                    P, Lseg, origin, x_loc, y_loc, z_loc
+                )
+                if mseg.n_points > 0:
+                    meshes.append(mseg)
+            continue
         elif (
             bid_int is not None
             and tube_outer_radius_per_bar_id is not None
@@ -715,6 +744,7 @@ def _populate_estructura(
     longitud_terna: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> None:
     ipn = build_ipn_mesh(
         barras,
@@ -723,6 +753,7 @@ def _populate_estructura(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     _require_pyvista()
     plotter.set_background("white")
@@ -755,6 +786,7 @@ def _populate_fuerzas(
     tol_componente: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> None:
     ipn = build_ipn_mesh(
         barras,
@@ -763,6 +795,7 @@ def _populate_fuerzas(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
     _require_pyvista()
@@ -845,6 +878,7 @@ def _populate_deformada(
     escala_diagrama_slider: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> None:
     g = _escala_intrinseca_deformacion(barras, nodos_dict, D)
     disp = float(escala_diagrama_slider) * g
@@ -869,6 +903,7 @@ def _populate_deformada(
         disp,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     if ipn.n_points > 0:
         plotter.add_mesh(
@@ -898,6 +933,7 @@ def _populate_corte(
     escala_diagrama: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -906,6 +942,7 @@ def _populate_corte(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_corte_diagram_geometry(barras, nodos_dict, corte, escala_diagrama)
     _add_diagram_layers(plotter, ipn, quads, segs, refs)
@@ -925,6 +962,7 @@ def _populate_my(
     escala_diagrama: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -933,6 +971,7 @@ def _populate_my(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_my_diagram_geometry(
         barras, nodos_dict, ipn_dims, escala_seccion, escala_diagrama
@@ -954,6 +993,7 @@ def _populate_mz(
     escala_diagrama: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -962,6 +1002,7 @@ def _populate_mz(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_mz_diagram_geometry(
         barras,
@@ -987,6 +1028,7 @@ def _populate_mx(
     escala_diagrama: float,
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -995,6 +1037,7 @@ def _populate_mx(
         escala_seccion,
         ipn_dims_per_bar_id=ipn_dims_per_bar_id,
         tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_mx_diagram_geometry(barras, nodos_dict, escala_diagrama)
     _add_diagram_layers(plotter, ipn, quads, segs, refs)
@@ -1027,7 +1070,151 @@ def _hover_suffix(corte_key: str) -> str:
     return " (local)"
 
 
-def _install_diagram_hover(plotter: Any, get_hover_fn: Callable[[], List[Dict[str, Any]]], diagram_key: str) -> None:
+def _diagram_key_str(diagram_key: Union[str, Callable[[], str]]) -> str:
+    if callable(diagram_key):
+        try:
+            return str(diagram_key())
+        except Exception:
+            return "vy"
+    return str(diagram_key)
+
+
+def _closest_hover_row(
+    ren: Any,
+    hp: List[Dict[str, Any]],
+    x: float,
+    y: float,
+    tol_px: float,
+) -> int:
+    """Índice del punto de diagrama más cercano en pantalla, o -1."""
+    tol_px2 = tol_px * tol_px
+    best_i = -1
+    best_d2 = tol_px2 * 4.0
+    for i, p in enumerate(hp):
+        pos = p.get("pos")
+        if pos is None or len(pos) < 3:
+            continue
+        try:
+            ren.SetWorldPoint(float(pos[0]), float(pos[1]), float(pos[2]), 1.0)
+            ren.WorldToDisplay()
+            dp = ren.GetDisplayPoint()
+            dx = float(dp[0]) - x
+            dy = float(dp[1]) - y
+            d2 = dx * dx + dy * dy
+        except Exception:
+            continue
+        if d2 < best_d2:
+            best_d2 = d2
+            best_i = i
+    return best_i if best_i >= 0 and best_d2 <= tol_px2 else -1
+
+
+def ftool_selection_highlight_radius(
+    barras: List[Any],
+    nodos_dict: Dict[Any, Any],
+    ipn_dims: Optional[Dict[str, float]],
+    escala_seccion: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
+    profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+) -> float:
+    """Radio del tubo de resaltado coherente con la escena."""
+    _require_pyvista()
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+        profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
+    )
+    r, _ = _tube_radius_from_ipn(ipn)
+    return max(float(r) * 6.0, 0.45)
+
+
+def add_ftool_bar_selection_highlight(
+    plotter: Any,
+    barras: List[Any],
+    nodos_dict: Dict[Any, Any],
+    selected_bar_id: Optional[int],
+    tube_radius: float,
+) -> None:
+    if selected_bar_id is None:
+        return
+    _require_pyvista()
+    for barra in barras:
+        bid = getattr(barra, "id", None)
+        if bid is None or int(bid) != int(selected_bar_id):
+            continue
+        ci, cf = obtener_coordenadas_barra(barra, nodos_dict)
+        if ci is None or cf is None:
+            return
+        Gi = np.asarray(ci, dtype=float).ravel()[:3]
+        Gf = np.asarray(cf, dtype=float).ravel()[:3]
+        line = pv.Line(Gi, Gf)
+        tubed = line.tube(radius=float(tube_radius))
+        if tubed.n_points > 0:
+            plotter.add_mesh(
+                tubed,
+                color="#e67e22",
+                opacity=0.95,
+                smooth_shading=True,
+                name="ftool_bar_highlight",
+                pickable=False,
+            )
+        return
+
+
+def build_ftool_legend_lines(view_key: str, escala: float) -> List[str]:
+    """Textos leyenda esquina (unidades, convención, atajos)."""
+    ctrl = "Selección barra en tabla · Esc quita el resaltado"
+    if view_key == "geom":
+        return ["Geometría · coordenadas en cm", ctrl]
+    if view_key == "loads":
+        return ["Cargas · vectores en sistema global", ctrl]
+    if view_key == "def":
+        return [
+            "Deformada · desplazamientos en cm",
+            f"Amplificación visual (slider) = {escala:.2f}",
+            ctrl,
+        ]
+    if view_key in ("vy", "vz", "nx", "my", "mz", "mx"):
+        lab = _hover_etiqueta(view_key)
+        suf = _hover_suffix(view_key).strip()
+        return [
+            f"Diagrama {lab} · escala relativa = {escala:.2f}",
+            "Unidades: Tn (corte y axial); Tn·cm (momentos y torsión); longitudes en cm.",
+            suf,
+            "Colores: rojo / azul según signo (referencia local de cada barra).",
+            ctrl,
+        ]
+    return []
+
+
+def add_ftool_viewport_legend(plotter: Any, view_key: str, escala: float) -> None:
+    lines = build_ftool_legend_lines(view_key, escala)
+    if not lines:
+        return
+    text = "\n".join(lines)
+    try:
+        plotter.add_text(
+            text,
+            position="lower_left",
+            viewport=True,
+            font_size=9,
+            color="#1a1a1a",
+            shadow=True,
+        )
+    except Exception:
+        pass
+
+
+def _install_diagram_hover(
+    plotter: Any,
+    get_hover_fn: Callable[[], List[Dict[str, Any]]],
+    diagram_key: Union[str, Callable[[], str]],
+) -> None:
     """Tooltip al mover el mouse (proyección pantalla; evita vtkCellPicker / wglMakeCurrent en Win32)."""
     if getattr(plotter, "_hyperstatic_hover_installed", False):
         return
@@ -1048,28 +1235,6 @@ def _install_diagram_hover(plotter: Any, get_hover_fn: Callable[[], List[Dict[st
 
     last_t = [0.0]
     tol_px = 30.0
-    tol_px2 = tol_px * tol_px
-
-    def _closest_hover_display(ren: Any, hp: List[Dict[str, Any]], x: float, y: float) -> Optional[int]:
-        best_i = -1
-        best_d2 = tol_px2 * 4.0
-        for i, p in enumerate(hp):
-            pos = p.get("pos")
-            if pos is None or len(pos) < 3:
-                continue
-            try:
-                ren.SetWorldPoint(float(pos[0]), float(pos[1]), float(pos[2]), 1.0)
-                ren.WorldToDisplay()
-                dp = ren.GetDisplayPoint()
-                dx = float(dp[0]) - x
-                dy = float(dp[1]) - y
-                d2 = dx * dx + dy * dy
-            except Exception:
-                continue
-            if d2 < best_d2:
-                best_d2 = d2
-                best_i = i
-        return best_i if best_i >= 0 and best_d2 <= tol_px2 else -1
 
     def on_move(_obj: Any, _event: str) -> None:
         t = time.monotonic()
@@ -1091,7 +1256,7 @@ def _install_diagram_hover(plotter: Any, get_hover_fn: Callable[[], List[Dict[st
             return
         try:
             ren = plotter.renderer
-            i = _closest_hover_display(ren, hp, x, y)
+            i = _closest_hover_row(ren, hp, x, y, tol_px)
         except Exception:
             QToolTip.hideText()
             return
@@ -1099,7 +1264,7 @@ def _install_diagram_hover(plotter: Any, get_hover_fn: Callable[[], List[Dict[st
             QToolTip.hideText()
             return
         best = hp[i]
-        ck = str(best.get("corte", diagram_key))
+        ck = str(best.get("corte", _diagram_key_str(diagram_key)))
         lab = _hover_etiqueta(ck)
         suf = _hover_suffix(ck)
         v = float(best["v"])

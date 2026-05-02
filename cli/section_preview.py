@@ -31,6 +31,7 @@ def draw_material_preview(
     viz_b: float,
     viz_tw: float,
     viz_tf: float,
+    manual_polygon_yz: Optional[list] = None,
 ) -> None:
     """
     Dibuja dos paneles: sección paramétrica (cálculo) y contorno IPN de vista 3D.
@@ -47,18 +48,50 @@ def draw_material_preview(
 
     # --- Panel superior: sección de cálculo ---
     if not mode_is_param:
-        ax_s.text(
-            0.5,
-            0.5,
-            "Modo manual\n(sin geometría paramétrica)",
-            ha="center",
-            va="center",
-            transform=ax_s.transAxes,
-            fontsize=10,
-            color="#333",
-        )
-        ax_s.set_xticks([])
-        ax_s.set_yticks([])
+        mp = manual_polygon_yz if isinstance(manual_polygon_yz, list) else []
+        if len(mp) >= 3:
+            try:
+                arr = np.asarray(mp, dtype=float)
+                ax_s.plot(arr[:, 0], arr[:, 1], "o-", color="#1b4f72", ms=4, lw=1.2)
+                ac = np.vstack([arr, arr[:1]])
+                ax_s.fill(ac[:, 0], ac[:, 1], alpha=0.35, color="#7fb3d5")
+                ax_s.set_title("Sección dibujada (manual, plano Y–Z)", fontsize=9, color="#2c3e50")
+                ax_s.set_xlabel("Y (cm)")
+                ax_s.set_ylabel("Z (cm)")
+                ax_s.set_aspect("equal", adjustable="box")
+                pad = float(max(np.ptp(arr[:, 0]), np.ptp(arr[:, 1]), 1.0) * 0.15)
+                ax_s.set_xlim(float(arr[:, 0].min()) - pad, float(arr[:, 0].max()) + pad)
+                ax_s.set_ylim(float(arr[:, 1].min()) - pad, float(arr[:, 1].max()) + pad)
+            except Exception:
+                ax_s.text(
+                    0.5,
+                    0.5,
+                    "Polígono inválido",
+                    ha="center",
+                    va="center",
+                    transform=ax_s.transAxes,
+                    color="#a93226",
+                )
+        elif len(mp) >= 1:
+            arr = np.asarray(mp, dtype=float)
+            ax_s.plot(arr[:, 0], arr[:, 1], "o-", color="#1b4f72", ms=5)
+            ax_s.set_title("Sección manual (≥ 3 puntos para cerrar)", fontsize=9, color="#2c3e50")
+            ax_s.set_xlabel("Y (cm)")
+            ax_s.set_ylabel("Z (cm)")
+            ax_s.set_aspect("equal", adjustable="box")
+        else:
+            ax_s.text(
+                0.5,
+                0.55,
+                "Modo manual:\nen la pestaña «Propiedades manuales»\ndibujá el perfil en el plano Y–Z\n(clic izq. = vértice, clic der. = borrar)",
+                ha="center",
+                va="center",
+                transform=ax_s.transAxes,
+                fontsize=9,
+                color="#333",
+            )
+            ax_s.set_xticks([])
+            ax_s.set_yticks([])
     else:
         key = sec_keys[sec_index] if 0 <= sec_index < len(sec_keys) else "rectangle"
         try:
