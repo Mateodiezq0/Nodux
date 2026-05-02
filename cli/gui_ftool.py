@@ -32,6 +32,7 @@ from cli.gui_viz import (
     add_nodos_overlay_pyvista,
     restricciones_texto_desde_spec,
 )
+from cli.section_props import compute_section, section_summary
 from cli.loader import build_estructura_from_spec
 from cli.pipeline import load_spec, solve_estructura
 
@@ -225,6 +226,20 @@ def _default_spec() -> Dict[str, Any]:
 IPN_DEFAULT = {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
 
 
+def _msg_yes_no_flags(MB: Any) -> Any:
+    SB = getattr(MB, "StandardButton", None)
+    if SB is not None:
+        return SB.Yes | SB.No
+    return MB.Yes | MB.No
+
+
+def _msg_is_yes(MB: Any, reply: Any) -> bool:
+    SB = getattr(MB, "StandardButton", None)
+    if SB is not None:
+        return reply == SB.Yes
+    return reply == MB.Yes
+
+
 def _try_qt():
     try:
         from PySide6.QtCore import Qt
@@ -389,6 +404,7 @@ class FtoolMainWindow(_QMainWindow):
         self._QCheckBox = QCheckBox
         self._QComboBox = QComboBox
         self._QLabel = QLabel
+        self._QWidget = QWidget
         self._widgets = qt_mod
         super().__init__(parent)
         titulo = "Hyperstatic — editor estilo Ftool (PyVista)"
@@ -420,6 +436,7 @@ class FtoolMainWindow(_QMainWindow):
                 QFrame,
                 QLineEdit,
                 QSizePolicy,
+                QStackedWidget,
                 QTabWidget,
                 QTableWidget,
                 QTableWidgetItem,
@@ -437,6 +454,7 @@ class FtoolMainWindow(_QMainWindow):
                 QFrame,
                 QLineEdit,
                 QSizePolicy,
+                QStackedWidget,
                 QTabWidget,
                 QTableWidget,
                 QTableWidgetItem,
@@ -448,6 +466,7 @@ class FtoolMainWindow(_QMainWindow):
             _tt_txt = Qt.ToolButtonTextBesideIcon
 
         self._QLineEdit = QLineEdit
+        self._QStackedWidget = QStackedWidget
 
         from cli.gui_icons import ftool_engineering_icons
 
@@ -620,12 +639,58 @@ class FtoolMainWindow(_QMainWindow):
         self._tabs_model.addTab(self._tbl_nodes, "Nodos")
         self._tabs_model.addTab(self._tbl_bars, "Barras")
         self._tabs_model.addTab(self._tbl_loads, "Cargas")
-        dock.setWidget(self._tabs_model)
+
+        self._IDX_TAB_INSPECTOR_MODELO = 0
+        self._IDX_TAB_INSPECTOR_MAT = 1
+
+        model_wrap = QWidget()
+        mw_lay = QVBoxLayout(model_wrap)
+        mw_lay.setContentsMargins(0, 0, 0, 0)
+        mw_lay.addWidget(self._tabs_model)
+
+        self._tbl_materials = QTableWidget()
+        for tbl in (self._tbl_materials,):
+            tbl.setAlternatingRowColors(True)
+            tbl.setSelectionBehavior(_sel_rows)
+            tbl.setSelectionMode(_sel_single)
+            tbl.setEditTriggers(_no_edit)
+            tbl.setShowGrid(True)
+            tbl.verticalHeader().setVisible(False)
+            tbl.verticalHeader().setDefaultSectionSize(20)
+            tbl.setContextMenuPolicy(Qt.CustomContextMenu)
+            tbl.horizontalHeader().setStretchLastSection(True)
+            tbl.horizontalHeader().setHighlightSections(False)
+
+        mat_toolbar = QHBoxLayout()
+        btn_mat_new = QPushButton("+ Material")
+        btn_mat_new.setToolTip("Definir material con sección paramétrica o propiedades manuales")
+        btn_mat_new.clicked.connect(lambda: self._dlg_material_editor(None))
+        btn_mat_ed = QPushButton("Editar")
+        btn_mat_ed.clicked.connect(self._on_edit_material_toolbar)
+        mat_toolbar.addWidget(btn_mat_new)
+        mat_toolbar.addWidget(btn_mat_ed)
+        mat_toolbar.addStretch(1)
+
+        mat_wrap = QWidget()
+        mat_lay = QVBoxLayout(mat_wrap)
+        mat_lay.setContentsMargins(4, 4, 4, 4)
+        mat_lay.addLayout(mat_toolbar)
+        mat_lay.addWidget(self._tbl_materials)
+
+        self._outer_inspector = QTabWidget()
+        self._outer_inspector.setDocumentMode(True)
+        self._outer_inspector.addTab(model_wrap, "Modelo")
+        self._outer_inspector.addTab(mat_wrap, "Materiales y secciones")
+
+        dock.setWidget(self._outer_inspector)
         left_dock = getattr(Qt, "LeftDockWidgetArea", None)
         if left_dock is None:
             left_dock = 1
         self.addDockWidget(left_dock, dock)
-        dock.setMinimumWidth(420)
+        dock.setMinimumWidth(460)
+
+        self._tbl_materials.customContextMenuRequested.connect(self._materials_context_menu)
+        self._tbl_materials.itemDoubleClicked.connect(self._on_materials_double_clicked)
 
         self._tbl_nodes.customContextMenuRequested.connect(
             lambda pos: self._table_context_menu(self._tbl_nodes, pos)
@@ -818,6 +883,592 @@ class FtoolMainWindow(_QMainWindow):
         finally:
             for tbl in (self._tbl_nodes, self._tbl_bars, self._tbl_loads):
                 tbl.blockSignals(False)
+        self._refresh_materials_table()
+
+    def _refresh_materials_table(self) -> None:
+        """Tabla del gestor de materiales y secciones."""
+        ur = self._user_role
+        TWI = self._QTableWidgetItem
+        mats = self._spec.get("materials") or {}
+        prev = self._tbl_materials.currentRow()
+        self._tbl_materials.blockSignals(True)
+        try:
+            _qt = self._Qt
+            _ro = (
+                _qt.ItemFlag.ItemIsSelectable | _qt.ItemFlag.ItemIsEnabled
+                if hasattr(_qt, "ItemFlag")
+                else _qt.ItemIsSelectable | _qt.ItemIsEnabled
+            )
+            self._tbl_materials.setRowCount(0)
+            self._tbl_materials.setColumnCount(7)
+            self._tbl_materials.setHorizontalHeaderLabels(
+                ["Nombre", "Tipo / forma", "E", "ν", "γ", "A (cm²)", "G"]
+            )
+            for name in sorted(mats.keys(), key=str.lower):
+                raw = mats[name]
+                r = self._tbl_materials.rowCount()
+                self._tbl_materials.insertRow(r)
+                sec = raw.get("section")
+                tipo = section_summary(sec) if sec else "Manual"
+                nu = raw.get("nu")
+                nu_s = "" if nu is None else str(nu)
+                ga = raw.get("gamma")
+                ga_s = "" if ga is None else str(ga)
+                try:
+                    if sec:
+                        gp = compute_section(sec)
+                        a_s = f"{gp['A']:.4g}"
+                        E = float(raw["E"])
+                        nu_f = float(raw["nu"]) if raw.get("nu") is not None else None
+                        G_v = (
+                            float(raw["G"])
+                            if raw.get("G") is not None
+                            else (E / (2.0 * (1.0 + nu_f)) if nu_f is not None else float("nan"))
+                        )
+                        g_s = f"{G_v:.4g}" if nu_f is not None or raw.get("G") is not None else "—"
+                    else:
+                        a_s = f"{float(raw.get('A', 0)):.4g}"
+                        g_s = f"{float(raw.get('G', 0)):.4g}"
+                except Exception:
+                    a_s = "—"
+                    g_s = "—"
+                vals = [
+                    str(name),
+                    tipo,
+                    str(raw.get("E", "")),
+                    nu_s,
+                    ga_s,
+                    a_s,
+                    g_s,
+                ]
+                for c, txt in enumerate(vals):
+                    it = TWI(txt)
+                    it.setFlags(_ro)
+                    it.setData(ur, ("material", str(name)))
+                    self._tbl_materials.setItem(r, c, it)
+            if 0 <= prev < self._tbl_materials.rowCount():
+                self._tbl_materials.selectRow(prev)
+            self._tbl_materials.resizeColumnsToContents()
+        finally:
+            self._tbl_materials.blockSignals(False)
+
+    def _populate_material_combo(self, cb: Any, current: Optional[str]) -> None:
+        cb.clear()
+        for mk in sorted((self._spec.get("materials") or {}).keys(), key=str.lower):
+            cb.addItem(mk, mk)
+        if current and cb.findData(current) < 0:
+            cb.addItem(str(current), current)
+        if current:
+            ix = cb.findData(current)
+            if ix < 0:
+                ix = cb.findText(str(current))
+            if ix >= 0:
+                cb.setCurrentIndex(ix)
+
+    def _material_used_by_bars(self, mat_name: str) -> int:
+        n = 0
+        for b in self._spec.get("bars") or []:
+            if str(b.get("material") or "default") == str(mat_name):
+                n += 1
+        return n
+
+    def _ipn_dims_per_bar_from_spec(self) -> Dict[int, Dict[str, float]]:
+        """Dimensiones IPN por id de barra según ``materials[*].viz`` (si no es global)."""
+        out: Dict[int, Dict[str, float]] = {}
+        mats = self._spec.get("materials") or {}
+        for br in self._spec.get("bars") or []:
+            if br.get("id") is None:
+                continue
+            mk = str(br.get("material") or "default")
+            m = mats.get(mk) or {}
+            vz = m.get("viz")
+            if not isinstance(vz, dict):
+                continue
+            if vz.get("use_global", True):
+                continue
+            try:
+                out[int(br["id"])] = {
+                    "h": float(vz["h"]),
+                    "b": float(vz["b"]),
+                    "tw": float(vz.get("tw", IPN_DEFAULT["tw"])),
+                    "tf": float(vz.get("tf", IPN_DEFAULT["tf"])),
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+
+    def _tube_outer_radius_per_bar_from_spec(self) -> Dict[int, float]:
+        """Radio exterior (cm) para barras con sección tubo circular y sin viz IPN propio."""
+        out: Dict[int, float] = {}
+        mats = self._spec.get("materials") or {}
+        for br in self._spec.get("bars") or []:
+            if br.get("id") is None:
+                continue
+            bid = int(br["id"])
+            mk = str(br.get("material") or "default")
+            m = mats.get(mk) or {}
+            vz = m.get("viz")
+            if isinstance(vz, dict) and not vz.get("use_global", True):
+                if all(k in vz for k in ("h", "b", "tw", "tf")):
+                    continue
+            sec = m.get("section") or {}
+            st = str(sec.get("type", "")).lower()
+            if st in ("tube_circle", "tubo_circular", "pipe"):
+                try:
+                    out[bid] = float(sec["D"]) / 2.0
+                except (KeyError, TypeError, ValueError):
+                    pass
+        return out
+
+    def _dlg_material_editor(self, edit_name: Optional[str]) -> None:
+        """edit_name None = nuevo material."""
+        from cli.loader import _resolve_material_stiffness
+
+        mats = self._spec.setdefault("materials", {})
+        D = self._QDialog(self)
+        D.setWindowTitle("Editar material" if edit_name else "Nuevo material")
+        D.setMinimumWidth(560)
+        form = self._QFormLayout(D)
+        SW = self._QStackedWidget
+        W = self._QWidget
+
+        name_edit = self._QLineEdit()
+        if edit_name:
+            name_edit.setText(edit_name)
+            name_edit.setReadOnly(True)
+        form.addRow("Nombre (clave)", name_edit)
+
+        existing = dict(mats.get(edit_name, {})) if edit_name else {}
+
+        s_e = self._QDoubleSpinBox()
+        s_e.setRange(1.0, 1e9)
+        s_e.setDecimals(4)
+        s_e.setValue(float(existing.get("E", 20000.0)))
+        form.addRow("E (Tn/cm²)", s_e)
+
+        s_nu = self._QDoubleSpinBox()
+        s_nu.setRange(-0.49, 0.499)
+        s_nu.setDecimals(4)
+        s_nu.setValue(float(existing.get("nu", 0.3)))
+        form.addRow("ν (Poisson)", s_nu)
+
+        s_ga = self._QDoubleSpinBox()
+        s_ga.setRange(0.0, 1.0)
+        s_ga.setDecimals(6)
+        s_ga.setValue(float(existing.get("gamma", 0.00785)))
+        form.addRow("γ peso específico (Tn/cm³)", s_ga)
+
+        chk_viz_global = self._QCheckBox("Vista 3D: usar dimensiones globales del visor (perfil IPN)")
+        ex_vz = existing.get("viz")
+        ex_vz = ex_vz if isinstance(ex_vz, dict) else {}
+        has_full_viz = all(k in ex_vz for k in ("h", "b", "tw", "tf"))
+        if "use_global" in ex_vz:
+            use_global_viz = bool(ex_vz["use_global"])
+        else:
+            use_global_viz = not has_full_viz
+        chk_viz_global.setChecked(use_global_viz)
+        vh = self._QDoubleSpinBox()
+        vh.setRange(1e-6, 1e6)
+        vh.setDecimals(4)
+        vh.setValue(float(ex_vz.get("h", IPN_DEFAULT["h"])))
+        vb = self._QDoubleSpinBox()
+        vb.setRange(1e-6, 1e6)
+        vb.setDecimals(4)
+        vb.setValue(float(ex_vz.get("b", IPN_DEFAULT["b"])))
+        vtw = self._QDoubleSpinBox()
+        vtw.setRange(1e-6, 1e6)
+        vtw.setDecimals(4)
+        vtw.setValue(float(ex_vz.get("tw", IPN_DEFAULT["tw"])))
+        vtf = self._QDoubleSpinBox()
+        vtf.setRange(1e-6, 1e6)
+        vtf.setDecimals(4)
+        vtf.setValue(float(ex_vz.get("tf", IPN_DEFAULT["tf"])))
+        viz_box = W()
+        fv = self._QFormLayout(viz_box)
+        fv.addRow("h (cm)", vh)
+        fv.addRow("b (cm)", vb)
+        fv.addRow("tw alma (cm)", vtw)
+        fv.addRow("tf patín (cm)", vtf)
+        form.addRow("", chk_viz_global)
+        form.addRow("Perfil IPN en vista", viz_box)
+
+        def _sync_viz_spin_enabled(checked: bool) -> None:
+            for w in (vh, vb, vtw, vtf):
+                w.setEnabled(not checked)
+
+        chk_viz_global.toggled.connect(_sync_viz_spin_enabled)
+        _sync_viz_spin_enabled(chk_viz_global.isChecked())
+
+        mode = self._QComboBox()
+        mode.addItem("Sección paramétrica", "param")
+        mode.addItem("Propiedades manuales (A, I, J, G)", "manual")
+        has_sec = bool(existing.get("section"))
+        has_man = not has_sec and any(k in existing for k in ("A", "I_y", "G"))
+        mode.setCurrentIndex(0 if (has_sec or not has_man) else 1)
+        form.addRow("Modo", mode)
+
+        stack = SW()
+        # --- página paramétrica ---
+        page_p = W()
+        fp = self._QFormLayout(page_p)
+        sec_type = self._QComboBox()
+        sec_map = [
+            ("Rectangular", "rectangle"),
+            ("Perfil I", "i_beam"),
+            ("Tubo circular", "tube_circle"),
+            ("Tubo rectangular", "tube_rect"),
+        ]
+        for lab, key in sec_map:
+            sec_type.addItem(lab, key)
+        sec_stack = SW()
+        raw_sec = existing.get("section") or {}
+        st0 = str(raw_sec.get("type", "rectangle")).lower()
+        ix_t = 0
+        for i, (_, k) in enumerate(sec_map):
+            if st0 in (k, k.replace("_", "")):
+                ix_t = i
+                break
+        sec_type.setCurrentIndex(ix_t)
+
+        # rect
+        w_rect = W()
+        fr = self._QFormLayout(w_rect)
+        sb = self._QDoubleSpinBox()
+        sb.setRange(1e-6, 1e6)
+        sb.setValue(float(raw_sec.get("b", 10)))
+        sh = self._QDoubleSpinBox()
+        sh.setRange(1e-6, 1e6)
+        sh.setValue(float(raw_sec.get("h", 20)))
+        fr.addRow("b (cm)", sb)
+        fr.addRow("h (cm)", sh)
+
+        w_i = W()
+        fi = self._QFormLayout(w_i)
+        si_h = self._QDoubleSpinBox()
+        si_h.setRange(1e-6, 1e6)
+        si_h.setValue(float(raw_sec.get("h", 20)))
+        si_bf = self._QDoubleSpinBox()
+        si_bf.setRange(1e-6, 1e6)
+        si_bf.setValue(float(raw_sec.get("bf", 10)))
+        si_tw = self._QDoubleSpinBox()
+        si_tw.setRange(1e-6, 1e6)
+        si_tw.setValue(float(raw_sec.get("tw", 0.6)))
+        si_tf = self._QDoubleSpinBox()
+        si_tf.setRange(1e-6, 1e6)
+        si_tf.setValue(float(raw_sec.get("tf", 1.0)))
+        fi.addRow("h total (cm)", si_h)
+        fi.addRow("bf patín (cm)", si_bf)
+        fi.addRow("tw alma (cm)", si_tw)
+        fi.addRow("tf patín (cm)", si_tf)
+
+        w_tc = W()
+        ftc = self._QFormLayout(w_tc)
+        sD = self._QDoubleSpinBox()
+        sD.setRange(1e-6, 1e6)
+        sD.setValue(float(raw_sec.get("D", 10)))
+        stwall = self._QDoubleSpinBox()
+        stwall.setRange(1e-6, 1e6)
+        stwall.setValue(float(raw_sec.get("t", 0.5)))
+        ftc.addRow("D exterior (cm)", sD)
+        ftc.addRow("t pared (cm)", stwall)
+
+        w_tr = W()
+        ftr = self._QFormLayout(w_tr)
+        sbo = self._QDoubleSpinBox()
+        sbo.setRange(1e-6, 1e6)
+        sbo.setValue(float(raw_sec.get("b", 12)))
+        sho = self._QDoubleSpinBox()
+        sho.setRange(1e-6, 1e6)
+        sho.setValue(float(raw_sec.get("h", 12)))
+        sto = self._QDoubleSpinBox()
+        sto.setRange(1e-6, 1e6)
+        sto.setValue(float(raw_sec.get("t", 0.5)))
+        ftr.addRow("b exterior (cm)", sbo)
+        ftr.addRow("h exterior (cm)", sho)
+        ftr.addRow("t pared (cm)", sto)
+
+        sec_stack.addWidget(w_rect)
+        sec_stack.addWidget(w_i)
+        sec_stack.addWidget(w_tc)
+        sec_stack.addWidget(w_tr)
+
+        def _sync_sec_page(i: int) -> None:
+            sec_stack.setCurrentIndex(i)
+
+        sec_type.currentIndexChanged.connect(_sync_sec_page)
+        _sync_sec_page(sec_type.currentIndex())
+        fp.addRow("Forma", sec_type)
+        fp.addRow(sec_stack)
+
+        # --- página manual ---
+        page_m = W()
+        fm = self._QFormLayout(page_m)
+        sA = self._QDoubleSpinBox()
+        sA.setRange(1e-12, 1e9)
+        sA.setValue(float(existing.get("A", 100)))
+        sIy = self._QDoubleSpinBox()
+        sIy.setRange(1e-12, 1e9)
+        sIy.setValue(float(existing.get("I_y", 833)))
+        sIz = self._QDoubleSpinBox()
+        sIz.setRange(1e-12, 1e9)
+        sIz.setValue(float(existing.get("I_z", 833)))
+        sJ = self._QDoubleSpinBox()
+        sJ.setRange(1e-12, 1e9)
+        sJ.setValue(float(existing.get("J", 1408)))
+        sG = self._QDoubleSpinBox()
+        sG.setRange(0.0, 1e9)
+        sG.setDecimals(4)
+        if existing.get("G") is not None:
+            sG.setValue(float(existing["G"]))
+        else:
+            sG.setValue(0.0)
+        fm.addRow("A (cm²)", sA)
+        fm.addRow("I_y (cm⁴)", sIy)
+        fm.addRow("I_z (cm⁴)", sIz)
+        fm.addRow("J (cm⁴)", sJ)
+        fm.addRow("G (Tn/cm²); si 0 se usa ν", sG)
+
+        stack.addWidget(page_p)
+        stack.addWidget(page_m)
+
+        def _sync_mode(i: int) -> None:
+            stack.setCurrentIndex(0 if i == 0 else 1)
+
+        mode.currentIndexChanged.connect(_sync_mode)
+        _sync_mode(mode.currentIndex())
+        form.addRow(stack)
+
+        preview_canvas = None
+        preview_fig = None
+
+        try:
+            from matplotlib.figure import Figure
+
+            try:
+                from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigCanvas
+            except ImportError:
+                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _FigCanvas
+
+            try:
+                from PySide6.QtWidgets import QSizePolicy as _QSP
+            except ImportError:
+                from PyQt5.QtWidgets import QSizePolicy as _QSP
+
+            from cli.section_preview import draw_material_preview
+
+            preview_fig = Figure(figsize=(4.2, 5.0), dpi=96)
+            preview_canvas = _FigCanvas(preview_fig)
+            preview_canvas.setMinimumHeight(320)
+            preview_canvas.setSizePolicy(_QSP.Expanding, _QSP.MinimumExpanding)
+        except ImportError:
+            pass
+
+        def _refresh_material_preview(*_: Any) -> None:
+            if preview_fig is None or preview_canvas is None:
+                return
+            draw_material_preview(
+                preview_fig,
+                mode_is_param=mode.currentIndex() == 0,
+                sec_index=int(sec_type.currentIndex()),
+                rect_b=float(sb.value()),
+                rect_h=float(sh.value()),
+                i_h=float(si_h.value()),
+                i_bf=float(si_bf.value()),
+                i_tw=float(si_tw.value()),
+                i_tf=float(si_tf.value()),
+                tc_D=float(sD.value()),
+                tc_t=float(stwall.value()),
+                tr_b=float(sbo.value()),
+                tr_h=float(sho.value()),
+                tr_t=float(sto.value()),
+                viz_use_global=bool(chk_viz_global.isChecked()),
+                viz_h=float(vh.value()),
+                viz_b=float(vb.value()),
+                viz_tw=float(vtw.value()),
+                viz_tf=float(vtf.value()),
+            )
+            preview_canvas.draw()
+
+        if preview_canvas is not None:
+            form.addRow("Previsualización", preview_canvas)
+            _spin_refresh = (
+                sb,
+                sh,
+                si_h,
+                si_bf,
+                si_tw,
+                si_tf,
+                sD,
+                stwall,
+                sbo,
+                sho,
+                sto,
+                vh,
+                vb,
+                vtw,
+                vtf,
+            )
+            for _sp in _spin_refresh:
+                _sp.valueChanged.connect(_refresh_material_preview)
+            sec_type.currentIndexChanged.connect(_refresh_material_preview)
+            mode.currentIndexChanged.connect(_refresh_material_preview)
+            chk_viz_global.toggled.connect(_refresh_material_preview)
+            _refresh_material_preview()
+
+        DBB = self._QDialogButtonBox
+        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
+        form.addRow(bb)
+        bb.accepted.connect(D.accept)
+        bb.rejected.connect(D.reject)
+        if self._dialog_accepted(D) is False:
+            return
+
+        nm = name_edit.text().strip()
+        if not nm:
+            self._QMessageBox.warning(self, "Material", "El nombre no puede estar vacío.")
+            return
+        if edit_name is None and nm in mats:
+            r = self._QMessageBox.question(
+                self,
+                "Material",
+                f"Ya existe «{nm}». ¿Sobrescribir?",
+                _msg_yes_no_flags(self._QMessageBox),
+            )
+            if not _msg_is_yes(self._QMessageBox, r):
+                return
+
+        entry: Dict[str, Any] = {"E": s_e.value(), "gamma": s_ga.value()}
+
+        sec_keys = ["rectangle", "i_beam", "tube_circle", "tube_rect"]
+        si = sec_type.currentIndex()
+        k = sec_keys[si] if 0 <= si < len(sec_keys) else "rectangle"
+        is_param = mode.currentIndex() == 0
+
+        if is_param:
+            entry["nu"] = s_nu.value()
+            idx = sec_type.currentIndex()
+            sec_stack.setCurrentIndex(idx)
+            if k == "rectangle":
+                entry["section"] = {"type": "rectangle", "b": sb.value(), "h": sh.value()}
+            elif k == "i_beam":
+                entry["section"] = {
+                    "type": "i_beam",
+                    "h": si_h.value(),
+                    "bf": si_bf.value(),
+                    "tw": si_tw.value(),
+                    "tf": si_tf.value(),
+                }
+            elif k == "tube_circle":
+                entry["section"] = {"type": "tube_circle", "D": sD.value(), "t": stwall.value()}
+            else:
+                entry["section"] = {
+                    "type": "tube_rect",
+                    "b": sbo.value(),
+                    "h": sho.value(),
+                    "t": sto.value(),
+                }
+            try:
+                _resolve_material_stiffness(entry, nm)
+            except Exception as ex:
+                self._QMessageBox.critical(self, "Material", str(ex))
+                return
+        else:
+            entry["A"] = sA.value()
+            entry["I_y"] = sIy.value()
+            entry["I_z"] = sIz.value()
+            entry["J"] = sJ.value()
+            Gv = sG.value()
+            if Gv > 0:
+                entry["G"] = Gv
+            else:
+                entry["nu"] = s_nu.value()
+            try:
+                _resolve_material_stiffness(dict(entry), nm)
+            except Exception as ex:
+                self._QMessageBox.critical(self, "Material", str(ex))
+                return
+
+        if chk_viz_global.isChecked():
+            entry.pop("viz", None)
+        else:
+            entry["viz"] = {
+                "use_global": False,
+                "h": vh.value(),
+                "b": vb.value(),
+                "tw": vtw.value(),
+                "tf": vtf.value(),
+            }
+
+        mats[nm] = entry
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
+    def _on_materials_double_clicked(self, item: Any) -> None:
+        it = self._tbl_materials.item(item.row(), 0)
+        if it is None:
+            return
+        self._dlg_material_editor(it.text())
+
+    def _on_edit_material_toolbar(self) -> None:
+        r = self._tbl_materials.currentRow()
+        if r < 0:
+            self._QMessageBox.information(self, "Materiales", "Seleccioná un material en la tabla.")
+            return
+        it = self._tbl_materials.item(r, 0)
+        if it is None:
+            return
+        self._dlg_material_editor(it.text())
+
+    def _materials_context_menu(self, pos: Any) -> None:
+        item = self._tbl_materials.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(self._user_role)
+        if not data or data[0] != "material":
+            return
+        menu = self._QMenu(self)
+        act_e = menu.addAction("Editar…")
+        act_e.triggered.connect(lambda: self._dlg_material_editor(str(data[1])))
+        act_d = menu.addAction("Eliminar")
+        act_d.triggered.connect(lambda: self._delete_material_key(str(data[1])))
+        menu.exec(self._tbl_materials.viewport().mapToGlobal(pos))
+
+    def _delete_material_key(self, mat_name: str) -> None:
+        mats = self._spec.get("materials") or {}
+        if mat_name not in mats:
+            return
+        def_key = str(self._spec.get("default_material") or "default")
+        if mat_name == def_key:
+            self._QMessageBox.warning(
+                self,
+                "Materiales",
+                "No se puede eliminar el material por defecto. Cambiá «default_material» en el JSON o creá otro predeterminado.",
+            )
+            return
+        nbar = self._material_used_by_bars(mat_name)
+        if nbar > 0:
+            self._QMessageBox.warning(
+                self,
+                "Materiales",
+                f"Hay {nbar} barra(s) que usan «{mat_name}». Asigná otro material antes de eliminar.",
+            )
+            return
+        MB = self._QMessageBox
+        if not _msg_is_yes(
+            MB,
+            MB.question(
+                self,
+                "Eliminar material",
+                f"¿Eliminar el material «{mat_name}»?",
+                _msg_yes_no_flags(MB),
+            ),
+        ):
+            return
+        del mats[mat_name]
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
 
     def _node_row_dict(self, nid: int) -> Optional[Dict[str, Any]]:
         for n in self._spec["nodes"]:
@@ -892,6 +1543,8 @@ class FtoolMainWindow(_QMainWindow):
         nb = est.nodos
         bb = est.barras
         cargas_nodales = getattr(est, "cargas_nodales", None) or []
+        per_bar = self._ipn_dims_per_bar_from_spec()
+        tube_bar = self._tube_outer_radius_per_bar_from_spec()
 
         if key == "geom":
             _populate_estructura(
@@ -903,6 +1556,8 @@ class FtoolMainWindow(_QMainWindow):
                 1.0,
                 True,
                 self._longitud_vector,
+                ipn_dims_per_bar_id=per_bar,
+                tube_outer_radius_per_bar_id=tube_bar,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -918,6 +1573,8 @@ class FtoolMainWindow(_QMainWindow):
                 True,
                 self._longitud_vector,
                 1e-9,
+                ipn_dims_per_bar_id=per_bar,
+                tube_outer_radius_per_bar_id=tube_bar,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -933,6 +1590,8 @@ class FtoolMainWindow(_QMainWindow):
                     1.0,
                     True,
                     self._longitud_vector,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
                 add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
                 did_overlay = True
@@ -955,30 +1614,83 @@ class FtoolMainWindow(_QMainWindow):
                     self._longitud_vector,
                     np.asarray(D),
                     esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "vy":
                 self._hover_state["hover"] = _populate_corte(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, "vy", esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    "vy",
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "vz":
                 self._hover_state["hover"] = _populate_corte(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, "vz", esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    "vz",
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "nx":
                 self._hover_state["hover"] = _populate_corte(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, "nx", esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    "nx",
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "my":
                 self._hover_state["hover"] = _populate_my(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "mz":
                 self._hover_state["hover"] = _populate_mz(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             elif key == "mx":
                 self._hover_state["hover"] = _populate_mx(
-                    self._plotter, bb, nodos_dict, self._ipn_dims, 1.0, True, esc
+                    self._plotter,
+                    bb,
+                    nodos_dict,
+                    self._ipn_dims,
+                    1.0,
+                    True,
+                    esc,
+                    ipn_dims_per_bar_id=per_bar,
+                    tube_outer_radius_per_bar_id=tube_bar,
                 )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -1084,9 +1796,12 @@ class FtoolMainWindow(_QMainWindow):
         for i in ids:
             cbi.addItem(str(i), i)
             cbj.addItem(str(i), i)
+        cb_mat = self._QComboBox()
+        self._populate_material_combo(cb_mat, self._spec.get("default_material") or "default")
         form.addRow("ID barra", sp_id)
         form.addRow("Nodo i", cbi)
         form.addRow("Nodo j", cbj)
+        form.addRow("Material", cb_mat)
         DBB = self._QDialogButtonBox
         bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
         form.addRow(bb)
@@ -1095,9 +1810,12 @@ class FtoolMainWindow(_QMainWindow):
         if self._dialog_accepted(d) is False:
             return
         bid = sp_id.value()
+        mname = cb_mat.currentData()
+        if mname is None:
+            mname = (cb_mat.currentText() or "").strip() or "default"
         self._spec["bars"] = [b for b in self._spec["bars"] if b["id"] != bid]
         self._spec["bars"].append(
-            {"id": bid, "i": cbi.currentData(), "j": cbj.currentData(), "material": "default"}
+            {"id": bid, "i": cbi.currentData(), "j": cbj.currentData(), "material": str(mname)}
         )
         self._spec["bars"].sort(key=lambda x: x["id"])
         self._invalidate_solution()
@@ -1223,12 +1941,12 @@ class FtoolMainWindow(_QMainWindow):
         ni, nf = int(bar["i"]), int(bar["j"])
         cbi.setCurrentIndex(max(0, cbi.findData(ni)))
         cbj.setCurrentIndex(max(0, cbj.findData(nf)))
-        mat = self._QLineEdit()
-        mat.setText(str(bar.get("material") or "default"))
+        cb_mat = self._QComboBox()
+        self._populate_material_combo(cb_mat, str(bar.get("material") or "default"))
         form.addRow("ID barra", lid)
         form.addRow("Nodo i", cbi)
         form.addRow("Nodo j", cbj)
-        form.addRow("Material", mat)
+        form.addRow("Material", cb_mat)
         DBB = self._QDialogButtonBox
         bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
         form.addRow(bb)
@@ -1238,7 +1956,10 @@ class FtoolMainWindow(_QMainWindow):
             return
         bar["i"] = int(cbi.currentData())
         bar["j"] = int(cbj.currentData())
-        bar["material"] = mat.text().strip() or "default"
+        mm = cb_mat.currentData()
+        if mm is None:
+            mm = (cb_mat.currentText() or "").strip() or "default"
+        bar["material"] = str(mm)
         self._invalidate_solution()
         self._refresh_tree()
         self._redraw()
@@ -1348,8 +2069,19 @@ class FtoolMainWindow(_QMainWindow):
             self._delete_bar(int(ident))
         elif kind == "load":
             self._delete_load(int(ident))
+        elif kind == "material":
+            self._delete_material_key(str(ident))
 
     def _on_delete_selection(self) -> None:
+        if self._outer_inspector.currentIndex() == self._IDX_TAB_INSPECTOR_MAT:
+            r = self._tbl_materials.currentRow()
+            if r >= 0:
+                it = self._tbl_materials.item(r, 0)
+                if it is not None:
+                    self._delete_material_key(it.text())
+                    return
+            self._QMessageBox.information(self, "Eliminar", "Seleccioná un material en la tabla.")
+            return
         idx = self._tabs_model.currentIndex()
         tables = (self._tbl_nodes, self._tbl_bars, self._tbl_loads)
         if 0 <= idx < len(tables):
@@ -1365,7 +2097,7 @@ class FtoolMainWindow(_QMainWindow):
         self._QMessageBox.information(
             self,
             "Eliminar",
-            "Seleccioná una fila en la pestaña activa del inspector (Nodos, Barras o Cargas).",
+            "Seleccioná una fila en Modelo (Nodos/Barras/Cargas) o un material.",
         )
 
     def _delete_node(self, nid: int) -> None:

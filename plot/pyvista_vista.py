@@ -250,16 +250,18 @@ def build_ipn_mesh(
     escala_seccion: float = 1.0,
     *,
     coord_nodos_dict: Optional[Dict[Any, Any]] = None,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> "pv.PolyData":
     """Malla cerrada de perfiles IPN (prismas), misma convención que ``_dibujo_geometria_estructura``."""
     _require_pyvista()
-    h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
-
     meshes: List[pv.PolyData] = []
     nd = coord_nodos_dict if coord_nodos_dict is not None else nodos_dict
     solo = coord_nodos_dict is not None
 
     for barra in barras:
+        bid = getattr(barra, "id", None)
+        bid_int = int(bid) if bid is not None else None
         coord_i, coord_f = obtener_coordenadas_barra(barra, nd, solo_nodos_dict=solo)
         if coord_i is None or coord_f is None:
             continue
@@ -305,6 +307,29 @@ def build_ipn_mesh(
             x_local = x_local / max(np.linalg.norm(x_local), 1e-12)
             y_local = y_local / max(np.linalg.norm(y_local), 1e-12)
             z_local = z_local / max(np.linalg.norm(z_local), 1e-12)
+
+        custom_ipn = (
+            ipn_dims_per_bar_id is not None
+            and bid_int is not None
+            and bid_int in ipn_dims_per_bar_id
+        )
+        if custom_ipn:
+            dims_src = ipn_dims_per_bar_id[bid_int]
+        elif (
+            bid_int is not None
+            and tube_outer_radius_per_bar_id is not None
+            and bid_int in tube_outer_radius_per_bar_id
+        ):
+            Ro = float(tube_outer_radius_per_bar_id[bid_int]) * float(escala_seccion)
+            ln = pv.Line(origin, end)
+            meshes.append(ln.tube(radius=max(Ro, 1e-12), n_sides=48))
+            continue
+        else:
+            dims_src = None
+
+        h, b, tw, tf = _dims_perfil_ipn(
+            dims_src if custom_ipn else ipn_dims, escala_seccion
+        )
 
         boxes = [
             (0.0, L, -b / 2.0, b / 2.0, h / 2.0 - tf, h / 2.0),

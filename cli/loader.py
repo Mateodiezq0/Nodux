@@ -15,6 +15,8 @@ from core.carga_puntual import CargaPuntual, reacciones_de_empotramiento
 from core.estructura import Estructura
 from core.nodos import Nodo
 
+from cli.section_props import compute_section
+
 
 def _as_bool6(raw: Any, label: str) -> List[bool]:
     if raw is None:
@@ -32,6 +34,54 @@ def _as_bool6(raw: Any, label: str) -> List[bool]:
     raise ValueError(f"{label}: se esperaba lista de 6 valores bool/null, recibí {raw!r}")
 
 
+def _resolve_material_stiffness(m: Dict[str, Any], label: str) -> Dict[str, float]:
+    """
+    Obtiene E, A, I_y, I_z, G, J para el análisis.
+    - Si existe ``section``, calcula geometría con ``compute_section``.
+    - Si falta G: se usa nu → G = E/(2(1+nu)).
+    - Si no hay sección, deben estar todos los escalares explícitos (legacy).
+    """
+    m = dict(m)
+    sec = m.get("section")
+    if sec:
+        geo = compute_section(sec)
+        m["A"] = geo["A"]
+        m["I_y"] = geo["I_y"]
+        m["I_z"] = geo["I_z"]
+        m["J"] = geo["J"]
+
+    if "E" not in m:
+        raise ValueError(f"Material {label}: falta E (módulo de elasticidad)")
+
+    E = float(m["E"])
+    for k in ("A", "I_y", "I_z", "J"):
+        if k not in m:
+            raise ValueError(
+                f"Material {label}: falta {k}. Agregue una sección paramétrica ('section') "
+                f"o valores explícitos."
+            )
+
+    G_raw = m.get("G")
+    if G_raw is not None and G_raw != "":
+        G = float(G_raw)
+    elif m.get("nu") is not None:
+        nu = float(m["nu"])
+        G = E / (2.0 * (1.0 + nu))
+    else:
+        raise ValueError(
+            f"Material {label}: defina G (módulo de corte) o nu (Poisson) para derivar G."
+        )
+
+    return {
+        "E": E,
+        "A": float(m["A"]),
+        "I_y": float(m["I_y"]),
+        "I_z": float(m["I_z"]),
+        "G": G,
+        "J": float(m["J"]),
+    }
+
+
 def _material_lookup(spec: Dict[str, Any], name: Optional[str]) -> Dict[str, float]:
     mats = spec.get("materials") or {}
     if not isinstance(mats, dict):
@@ -40,11 +90,7 @@ def _material_lookup(spec: Dict[str, Any], name: Optional[str]) -> Dict[str, flo
     if key not in mats:
         raise ValueError(f"Material no definido: {key!r}. Claves: {list(mats.keys())}")
     m = mats[key]
-    req = ("E", "A", "I_y", "I_z", "G", "J")
-    for r in req:
-        if r not in m:
-            raise ValueError(f"Material {key!r}: falta {r}")
-    return {r: float(m[r]) for r in req}
+    return _resolve_material_stiffness(m, key)
 
 
 def _net_global_force(load: Dict[str, Any]) -> np.ndarray:

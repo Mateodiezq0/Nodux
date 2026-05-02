@@ -88,15 +88,19 @@ def build_ipn_mesh_deformada_curva(
     escala_seccion: float,
     D: np.ndarray,
     factor_visual: float,
+    *,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> "pv.PolyData":
     """
     Malla IPN siguiendo el eje deformado (Bernoulli: axial + Hermite en y/z local según K_local).
     ``factor_visual`` escala U y rotaciones (mismo factor que el deslizador de la pestaña).
     """
     _require_pyvista()
-    h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
     meshes: List[pv.PolyData] = []
     for barra in barras:
+        bid = getattr(barra, "id", None)
+        bid_int = int(bid) if bid is not None else None
         ci0, cf0 = obtener_coordenadas_barra(barra, nodos_dict)
         if ci0 is None or cf0 is None:
             continue
@@ -139,6 +143,31 @@ def build_ipn_mesh_deformada_curva(
             dloc = _centroid_disp_local_bern(float(xk), Lbar, ul)
             poly.append(r0 + R.T @ dloc)
         poly_a = np.array(poly, dtype=float)
+        custom_ipn = (
+            ipn_dims_per_bar_id is not None
+            and bid_int is not None
+            and bid_int in ipn_dims_per_bar_id
+        )
+        if custom_ipn:
+            h, b, tw, tf = _dims_perfil_ipn(
+                ipn_dims_per_bar_id[bid_int], escala_seccion
+            )
+        elif (
+            bid_int is not None
+            and tube_outer_radius_per_bar_id is not None
+            and bid_int in tube_outer_radius_per_bar_id
+        ):
+            Ro = float(tube_outer_radius_per_bar_id[bid_int]) * float(escala_seccion)
+            if poly_a.shape[0] >= 2:
+                meshes.append(
+                    pv.lines_from_points(poly_a).tube(
+                        radius=max(Ro, 1e-12), n_sides=48
+                    )
+                )
+            continue
+        else:
+            h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
+
         for seg in range(ns):
             origin = poly_a[seg]
             vend = poly_a[seg + 1] - origin
@@ -613,6 +642,23 @@ def _tube_radius_from_ipn(ipn: pv.PolyData) -> Tuple[float, float]:
     return r, seg_tol
 
 
+def _diagram_segment_tolerance(
+    ipn: pv.PolyData,
+    segs: List[Tuple[np.ndarray, np.ndarray, str]],
+    refs: List[Tuple[np.ndarray, np.ndarray]],
+) -> float:
+    """Evita filtrar tramos cortos legítimos del diagrama (p. ej. curvas densas)."""
+    lens: List[float] = []
+    for p0, p1, _ in segs:
+        lens.append(_segment_length(p0, p1))
+    for a, b in refs:
+        lens.append(_segment_length(a, b))
+    lens = [x for x in lens if x > 0]
+    med = float(np.median(lens)) if lens else 1.0
+    _, bbox_tol = _tube_radius_from_ipn(ipn)
+    return max(1e-15 * max(med, 1.0), min(bbox_tol, 1e-12 * max(med, 1.0)))
+
+
 def _add_diagram_layers(
     plotter: Any,
     ipn: pv.PolyData,
@@ -635,7 +681,8 @@ def _add_diagram_layers(
         qm = _quad_to_polydata(quad)
         if qm.n_points > 0:
             plotter.add_mesh(qm, color=col, opacity=0.42, show_edges=True, edge_color=col, line_width=0.5)
-    r_tube, seg_tol = _tube_radius_from_ipn(ipn)
+    r_tube, _ = _tube_radius_from_ipn(ipn)
+    seg_tol = _diagram_segment_tolerance(ipn, segs, refs)
     for p0, p1, col in segs:
         if _segment_length(p0, p1) < seg_tol:
             continue
@@ -666,8 +713,17 @@ def _populate_estructura(
     escala_seccion: float,
     mostrar_ejes_locales: bool,
     longitud_terna: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> None:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     _require_pyvista()
     plotter.set_background("white")
     if ipn.n_points > 0:
@@ -697,8 +753,17 @@ def _populate_fuerzas(
     mostrar_ejes_locales: bool,
     longitud_vector: float,
     tol_componente: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> None:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
     _require_pyvista()
     plotter.set_background("white")
@@ -778,6 +843,8 @@ def _populate_deformada(
     longitud_terna: float,
     D: np.ndarray,
     escala_diagrama_slider: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> None:
     g = _escala_intrinseca_deformacion(barras, nodos_dict, D)
     disp = float(escala_diagrama_slider) * g
@@ -794,7 +861,14 @@ def _populate_deformada(
         if ln.n_points > 0:
             plotter.add_mesh(ln, color="#bdc3c7", line_width=2)
     ipn = build_ipn_mesh_deformada_curva(
-        barras, nodos_dict, ipn_dims, escala_seccion, D, disp
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        D,
+        disp,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
     )
     if ipn.n_points > 0:
         plotter.add_mesh(
@@ -822,8 +896,17 @@ def _populate_corte(
     mostrar_ejes_locales: bool,
     corte: str,
     escala_diagrama: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> List[Dict[str, Any]]:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     quads, segs, refs, _, hover = collect_corte_diagram_geometry(barras, nodos_dict, corte, escala_diagrama)
     _add_diagram_layers(plotter, ipn, quads, segs, refs)
     if mostrar_ejes_locales:
@@ -840,8 +923,17 @@ def _populate_my(
     escala_seccion: float,
     mostrar_ejes_locales: bool,
     escala_diagrama: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> List[Dict[str, Any]]:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     quads, segs, refs, _, hover = collect_my_diagram_geometry(
         barras, nodos_dict, ipn_dims, escala_seccion, escala_diagrama
     )
@@ -860,8 +952,17 @@ def _populate_mz(
     escala_seccion: float,
     mostrar_ejes_locales: bool,
     escala_diagrama: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> List[Dict[str, Any]]:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     quads, segs, refs, _, hover = collect_mz_diagram_geometry(
         barras,
         nodos_dict,
@@ -884,8 +985,17 @@ def _populate_mx(
     escala_seccion: float,
     mostrar_ejes_locales: bool,
     escala_diagrama: float,
+    ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
+    tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
 ) -> List[Dict[str, Any]]:
-    ipn = build_ipn_mesh(barras, nodos_dict, ipn_dims, escala_seccion)
+    ipn = build_ipn_mesh(
+        barras,
+        nodos_dict,
+        ipn_dims,
+        escala_seccion,
+        ipn_dims_per_bar_id=ipn_dims_per_bar_id,
+        tube_outer_radius_per_bar_id=tube_outer_radius_per_bar_id,
+    )
     quads, segs, refs, _, hover = collect_mx_diagram_geometry(barras, nodos_dict, escala_diagrama)
     _add_diagram_layers(plotter, ipn, quads, segs, refs)
     if mostrar_ejes_locales:
