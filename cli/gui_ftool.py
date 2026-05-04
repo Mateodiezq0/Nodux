@@ -13,7 +13,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -526,6 +526,17 @@ def _msg_yes_no_flags(MB: Any) -> Any:
     return MB.Yes | MB.No
 
 
+def _startup_progress_tick(
+    cb: Optional[Callable[[int, str], None]], pct: int, msg: str
+) -> None:
+    if cb is None:
+        return
+    try:
+        cb(pct, msg)
+    except Exception:
+        pass
+
+
 def _msg_is_yes(MB: Any, reply: Any) -> bool:
     SB = getattr(MB, "StandardButton", None)
     if SB is not None:
@@ -656,6 +667,7 @@ class FtoolMainWindow(_QMainWindow):
         *,
         precargar_ejemplo: bool = False,
         parent: Optional[Any] = None,
+        startup_progress: Optional[Callable[[int, str], None]] = None,
     ) -> None:
         (
             _,
@@ -700,6 +712,7 @@ class FtoolMainWindow(_QMainWindow):
         self._QWidget = QWidget
         self._widgets = qt_mod
         super().__init__(parent)
+        _startup_progress_tick(startup_progress, 6, "Iniciando ventana…")
         titulo = "Reticular — análisis de estructuras 3D (PyVista)"
         if precargar_ejemplo:
             from .supertesteo_spec import get_supertesteo_spec
@@ -770,6 +783,7 @@ class FtoolMainWindow(_QMainWindow):
         from cli.gui_icons import ftool_engineering_icons
 
         _ico = ftool_engineering_icons()
+        _startup_progress_tick(startup_progress, 18, "Barra de herramientas…")
 
         central = QWidget()
         central.setObjectName("centralRoot")
@@ -909,8 +923,10 @@ class FtoolMainWindow(_QMainWindow):
         lay_3d = QVBoxLayout(view_3d)
         lay_3d.setContentsMargins(0, 0, 0, 0)
         lay_3d.setSpacing(0)
+        _startup_progress_tick(startup_progress, 32, "Inicializando vista 3D (PyVista)…")
         self._plotter = QtInteractor(view_3d)
         lay_3d.addWidget(self._plotter.interactor, stretch=1)
+        _startup_progress_tick(startup_progress, 58, "Motor de gráficos listo")
 
         self._wrap_resultados = QWidget(central)
         rl = QVBoxLayout(self._wrap_resultados)
@@ -1024,6 +1040,7 @@ class FtoolMainWindow(_QMainWindow):
         self.addDockWidget(right_dock, self._inspector_dock)
         self._inspector_dock.setMinimumWidth(380)
         self._inspector_dock.setMaximumWidth(540)
+        _startup_progress_tick(startup_progress, 72, "Panel de tablas…")
 
         # ── Barra de estado ──────────────────────────────────────────────
         self._legend_status  = QLabel("")
@@ -1059,6 +1076,7 @@ class FtoolMainWindow(_QMainWindow):
         self._base_font = QFont("Segoe UI", 9)
         self.setFont(self._base_font)
         self._apply_ftool_theme()
+        _startup_progress_tick(startup_progress, 82, "Menús y atajos…")
 
         # ── Menús ────────────────────────────────────────────────────────
         menu = self.menuBar().addMenu("Archivo")
@@ -1138,11 +1156,13 @@ class FtoolMainWindow(_QMainWindow):
                 "Ejemplo supertesteo: 5 nodos, 4 barras, 3 cargas."
             )
 
+        _startup_progress_tick(startup_progress, 90, "Cargando modelo y vista…")
         self._refresh_tree()
         self._redraw()
         self._sync_ws_toggle_buttons()
         self._on_workspace_page_changed(self._workspace_stack.currentIndex())
         self._refresh_resultados_tables_ui()
+        _startup_progress_tick(startup_progress, 100, "Listo")
 
     def _set_ui_theme(self, name: str) -> None:
         self._ui_theme = "dark" if str(name).lower() == "dark" else "light"
@@ -2823,12 +2843,60 @@ class FtoolMainWindow(_QMainWindow):
         self.statusBar().showMessage("OK")
 
     def _on_analyze(self) -> None:
+        Qt = self._Qt
+        if self._qt_backend == "PySide6":
+            from PySide6.QtWidgets import QApplication, QProgressDialog
+        else:
+            from PyQt5.QtWidgets import QApplication, QProgressDialog
+
+        prog = QProgressDialog(self)
+        prog.setWindowTitle("Análisis estructural")
         try:
+            _ic = self.windowIcon()
+            if _ic is not None and not _ic.isNull():
+                prog.setWindowIcon(_ic)
+        except Exception:
+            pass
+        prog.setLabelText("Preparando…")
+        prog.setRange(0, 100)
+        prog.setValue(0)
+        prog.setMinimumDuration(0)
+        try:
+            prog.setCancelButton(None)
+        except Exception:
+            pass
+        try:
+            prog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        except AttributeError:
+            prog.setWindowModality(Qt.ApplicationModal)
+        prog.show()
+        QApplication.processEvents()
+
+        est: Optional[Estructura] = None
+        try:
+            prog.setLabelText("Armando estructura desde el modelo…")
+            prog.setValue(18)
+            QApplication.processEvents()
             est = build_estructura_from_spec(self._spec)
+
+            prog.setLabelText("Resolviendo sistema de ecuaciones…")
+            prog.setValue(48)
+            QApplication.processEvents()
             self._F_internas = solve_estructura(est)
+
+            prog.setLabelText("Actualizando tablas y vista 3D…")
+            prog.setValue(78)
+            QApplication.processEvents()
         except Exception as e:
             self._QMessageBox.critical(self, "Analisis", str(e))
             return
+        finally:
+            try:
+                prog.setValue(100)
+            except Exception:
+                pass
+            prog.close()
+
         self._estructura = est
         self._solved = True
         self._refresh_resultados_tables_ui()
@@ -3304,7 +3372,74 @@ def run_ftool_gui(*, precargar_ejemplo: bool = False) -> None:
     except Exception:
         pass
 
-    w = FtoolMainWindow(backend, qt, precargar_ejemplo=precargar_ejemplo)
+    from cli.gui_icons import ftool_app_window_icon
+
+    _app_icon = ftool_app_window_icon()
+    app.setWindowIcon(_app_icon)
+    try:
+        app.setApplicationDisplayName("Reticular")
+    except Exception:
+        pass
+
+    if backend == "PySide6":
+        from PySide6.QtWidgets import QProgressBar
+    else:
+        from PyQt5.QtWidgets import QProgressBar
+
+    _splash = QDialog()
+    _splash.setObjectName("reticularSplash")
+    _splash.setStyleSheet(
+        "QDialog#reticularSplash { background-color: #f4f4f4; border: 2px solid #1a6fc4; border-radius: 8px; }"
+    )
+    _splash.setWindowIcon(_app_icon)
+    _splash.setWindowTitle("Reticular")
+    _TS = getattr(Qt, "WindowType", Qt)
+    _sp_flag = getattr(_TS, "SplashScreen", Qt.SplashScreen)
+    _fr_flag = getattr(_TS, "FramelessWindowHint", Qt.FramelessWindowHint)
+    _top_flag = getattr(_TS, "WindowStaysOnTopHint", Qt.WindowStaysOnTopHint)
+    _splash.setWindowFlags(_sp_flag | _fr_flag | _top_flag)
+    _sl = QVBoxLayout(_splash)
+    _sl.setContentsMargins(22, 18, 22, 18)
+    _sl.setSpacing(10)
+    _lbl_title = QLabel("Reticular")
+    _lbl_title.setStyleSheet("font-weight: 600; font-size: 15pt; color: #1a6fc4;")
+    _lbl_msg = QLabel("Cargando…")
+    _lbl_msg.setStyleSheet("color: #404040;")
+    _bar = QProgressBar()
+    _bar.setRange(0, 100)
+    _bar.setValue(0)
+    _bar.setTextVisible(True)
+    _sl.addWidget(_lbl_title)
+    _sl.addWidget(_lbl_msg)
+    _sl.addWidget(_bar)
+    _splash.setLayout(_sl)
+    _splash.setFixedSize(400, 138)
+    _splash.show()
+    QApplication.processEvents()
+    _ps = app.primaryScreen()
+    if _ps is not None:
+        _fg = _splash.frameGeometry()
+        _fg.moveCenter(_ps.availableGeometry().center())
+        _splash.move(_fg.topLeft())
+
+    def _startup_tick_ui(pct: int, text: str) -> None:
+        _bar.setValue(pct)
+        _lbl_msg.setText(text)
+        QApplication.processEvents()
+
+    _startup_tick_ui(2, "Iniciando…")
+    try:
+        w = FtoolMainWindow(
+            backend,
+            qt,
+            precargar_ejemplo=precargar_ejemplo,
+            startup_progress=_startup_tick_ui,
+        )
+    finally:
+        _splash.close()
+        QApplication.processEvents()
+
+    w.setWindowIcon(_app_icon)
     w.show()
     app.exec() if hasattr(app, "exec") else app.exec_()
 

@@ -8,7 +8,7 @@ from typing import Callable, Dict
 
 _cache: Dict[str, object] = {}
 # Incrementar al cambiar dibujos para invalidar caché en caliente (reload de módulo).
-_ICONS_REVISION = 2
+_ICONS_REVISION = 3
 
 
 def _gui_modules():
@@ -38,6 +38,45 @@ def _gui_modules():
         )
 
         return QPointF, Qt, QSize, QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
+
+
+def ftool_app_window_icon() -> "QIcon":
+    """Icono multi-tamaño para ventana principal y barra de tareas (Windows/Qt)."""
+    _, Qt, _, QBrush, QColor, QIcon, QPainter, QPen, QPixmap, _ = _gui_modules()
+
+    def paint_app(p: QPainter, sz: int) -> None:
+        _aa = getattr(getattr(QPainter, "RenderHint", QPainter), "Antialiasing", QPainter.Antialiasing)
+        p.setRenderHint(_aa, True)
+        p.setPen(QPen(QColor(0, 0, 0, 0)))
+        p.setBrush(QBrush(QColor("#1a6fc4")))
+        p.drawRoundedRect(1, 1, sz - 2, sz - 2, max(2.0, sz * 0.18), max(2.0, sz * 0.18))
+        _solid = getattr(getattr(Qt, "PenStyle", object), "SolidLine", None)
+        if _solid is None:
+            _solid = Qt.SolidLine
+        _nobrush = getattr(getattr(Qt, "BrushStyle", object), "NoBrush", Qt.NoBrush)
+        p.setPen(QPen(QColor("#ffffff"), max(1.0, sz / 14.0), _solid))
+        p.setBrush(_nobrush)
+        m = max(2, int(sz * 0.12))
+        x1, y1 = m, sz - m
+        xm, ym = sz // 2, m + 1
+        x2, y2 = sz - m, sz - m
+        p.drawLine(x1, y1, xm, ym)
+        p.drawLine(xm, ym, x2, y2)
+        r = max(1.5, sz * 0.09)
+        for cx, cy in ((x1, y1), (xm, ym), (x2, y2)):
+            p.setBrush(QBrush(QColor("#e8f4ff")))
+            p.setPen(QPen(QColor("#0d4a8a"), max(0.8, sz / 22.0), _solid))
+            p.drawEllipse(cx - r, cy - r, 2 * r, 2 * r)
+
+    ic = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pm = QPixmap(size, size)
+        pm.fill(QColor(0, 0, 0, 0))
+        p = QPainter(pm)
+        paint_app(p, size)
+        p.end()
+        ic.addPixmap(pm)
+    return ic
 
 
 def _icon_from_paint(size: int, painter_fn: Callable[..., None]) -> "QIcon":
