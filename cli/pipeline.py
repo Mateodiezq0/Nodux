@@ -45,7 +45,7 @@ def run_pipeline(
     *,
     escala_diagrama: float = 1.0,
     ipn_dims: Optional[Dict[str, float]] = None,
-    titulo: str = "Hyperstatic CLI — estructura y esfuerzos",
+    titulo: str = "Reticular — estructura y esfuerzos",
     show_matplotlib: bool = True,
 ) -> List[np.ndarray]:
     """

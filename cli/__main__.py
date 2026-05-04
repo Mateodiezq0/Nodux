@@ -47,7 +47,7 @@ def _cmd_gui(args: argparse.Namespace) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Hyperstatic Structures — definir modelo y ver esfuerzos (matplotlib, mismas pestañas que supertesteo)."
+        description="Reticular — análisis de estructuras reticuladas 3D."
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -59,7 +59,7 @@ def main() -> None:
         help="Solo resolver en memoria; no abrir matplotlib.",
     )
     pr.add_argument("--escala-diagrama", type=float, default=1.0, dest="escala_diagrama")
-    pr.add_argument("--titulo", type=str, default="Hyperstatic CLI — estructura y esfuerzos")
+    pr.add_argument("--titulo", type=str, default="Reticular — estructura y esfuerzos")
 
     pi = sub.add_parser("interactive", help="Menú paso a paso para armar nodos, barras y cargas; luego graficar.")
     pg = sub.add_parser("gui", help="Ventana gráfica estilo Ftool (PyVista + Qt): modelo, análisis, diagramas.")
