@@ -8,7 +8,7 @@ from typing import Callable, Dict
 
 _cache: Dict[str, object] = {}
 # Incrementar al cambiar dibujos para invalidar caché en caliente (reload de módulo).
-_ICONS_REVISION = 3
+_ICONS_REVISION = 7
 
 
 def _gui_modules():
@@ -190,6 +190,37 @@ def ftool_engineering_icons() -> Dict[str, object]:
         p.setPen(QPen(QColor("#4060a0"), 1.6))
         p.drawLine(3, sz - 3, sz - 3, sz - 3)
 
+    def paint_undo(p: QPainter, sz: int) -> None:
+        _solid = getattr(getattr(Qt, "PenStyle", object), "SolidLine", Qt.SolidLine)
+        _sq = getattr(getattr(Qt, "PenCapStyle", object), "SquareCap", getattr(Qt, "SquareCap", Qt.RoundCap))
+        _miter = getattr(getattr(Qt, "PenJoinStyle", object), "MiterJoin", getattr(Qt, "MiterJoin", Qt.RoundJoin))
+        p.setPen(QPen(QColor("#1f5d97"), 2.8, _solid, _sq, _miter))
+        _nobrush = getattr(getattr(Qt, "BrushStyle", object), "NoBrush", Qt.NoBrush)
+        p.setBrush(_nobrush)
+        # Flecha "u-turn" simple: línea superior, bajada y retorno
+        p.drawLine(15, 6, 8, 6)
+        p.drawLine(15, 6, 15, 12)
+        p.drawLine(8, 12, 15, 12)
+        p.setPen(QPen(QColor("#1f5d97"), 1.0, _solid))
+        p.setBrush(QBrush(QColor("#2f74b7")))
+        p.drawPolygon(QPolygonF([QPointF(3.5, 6.0), QPointF(8.2, 3.1), QPointF(8.2, 8.9)]))
+
+    def paint_redo(p: QPainter, sz: int) -> None:
+        _solid = getattr(getattr(Qt, "PenStyle", object), "SolidLine", Qt.SolidLine)
+        _sq = getattr(getattr(Qt, "PenCapStyle", object), "SquareCap", getattr(Qt, "SquareCap", Qt.RoundCap))
+        _miter = getattr(getattr(Qt, "PenJoinStyle", object), "MiterJoin", getattr(Qt, "MiterJoin", Qt.RoundJoin))
+        p.setPen(QPen(QColor("#1f5d97"), 2.8, _solid, _sq, _miter))
+        _nobrush = getattr(getattr(Qt, "BrushStyle", object), "NoBrush", Qt.NoBrush)
+        p.setBrush(_nobrush)
+        # Espejo horizontal de undo
+        p.drawLine(5, 6, 12, 6)
+        p.drawLine(5, 6, 5, 12)
+        
+        p.drawLine(12, 12, 5, 12)
+        p.setPen(QPen(QColor("#1f5d97"), 1.0, _solid))
+        p.setBrush(QBrush(QColor("#2f74b7")))
+        p.drawPolygon(QPolygonF([QPointF(16.5, 6.0), QPointF(11.8, 3.1), QPointF(11.8, 8.9)]))
+
     def paint_view3d(p: QPainter, sz: int) -> None:
         """Cubo isométrico alámbrico (bloque 3D reconocible)."""
         _nobrush = getattr(getattr(Qt, "BrushStyle", object), "NoBrush", Qt.NoBrush)
@@ -248,6 +279,8 @@ def ftool_engineering_icons() -> Dict[str, object]:
             "new": _icon_from_paint(s, paint_new),
             "open": _icon_from_paint(s, paint_open),
             "save": _icon_from_paint(s, paint_save),
+            "undo": _icon_from_paint(s, paint_undo),
+            "redo": _icon_from_paint(s, paint_redo),
             "view3d": _icon_from_paint(s, paint_view3d),
             "viewtable": _icon_from_paint(s, paint_viewtable),
             "_revision": _ICONS_REVISION,

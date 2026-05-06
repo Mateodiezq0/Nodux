@@ -187,13 +187,24 @@ QDockWidget {
     border: 1px solid #d0d8e0;
 }
 QDockWidget::title {
-    background-color: #dde4ec;
-    color: #1a2a3a;
-    padding: 5px 8px;
-    font-weight: 600;
-    font-size: 9pt;
+    background-color: #cfd9e6;
+    color: #12263d;
+    padding: 7px 10px;
+    font-weight: 700;
+    font-size: 10pt;
+    letter-spacing: 0.2px;
     border: none;
-    border-bottom: 1px solid #c0ccd8;
+    border-bottom: 1px solid #b3c2d2;
+}
+QWidget#dockTitleBar {
+    background-color: #cfd9e6;
+    border-bottom: 1px solid #b3c2d2;
+}
+QLabel#dockTitleLabel {
+    color: #12263d;
+    font-size: 10pt;
+    font-weight: 700;
+    padding: 6px 10px;
 }
 QTabWidget::pane {
     border: 1px solid #d4dae3;
@@ -202,23 +213,24 @@ QTabWidget::pane {
     padding: 0;
 }
 QTabBar::tab {
-    background-color: #e8edf3;
-    color: #505870;
+    background-color: #d8e0ea;
+    color: #25364d;
     padding: 5px 14px;
     margin-right: 2px;
-    border: 1px solid #d0d8e0;
+    border: 1px solid #b9c5d3;
     border-bottom: none;
     border-top-left-radius: 3px;
     border-top-right-radius: 3px;
     font-size: 9pt;
+    font-weight: 600;
 }
 QTabBar::tab:selected {
     background-color: #ffffff;
-    color: #1a6fc4;
+    color: #115ca8;
     border: 1px solid #d4dae3;
-    border-bottom: 2px solid #1a6fc4;
+    border-bottom: 2px solid #115ca8;
 }
-QTabBar::tab:hover:!selected { background-color: #d8e8f8; }
+QTabBar::tab:hover:!selected { background-color: #c9d8ea; }
 QTableWidget {
     background-color: white;
     alternate-background-color: #f4f8fd;
@@ -235,12 +247,12 @@ QTableWidget::item:selected {
     color: #102040;
 }
 QHeaderView::section {
-    background-color: #eaeef4;
-    color: #404860;
+    background-color: #d7e0eb;
+    color: #1f2f45;
     padding: 4px 6px;
     border: none;
-    border-right: 1px solid #d8dfe8;
-    border-bottom: 1px solid #d8dfe8;
+    border-right: 1px solid #c2ccd9;
+    border-bottom: 1px solid #c2ccd9;
     font-size: 9pt;
     font-weight: 600;
 }
@@ -303,6 +315,40 @@ QPushButton:hover {
     border-color: #90b8e0;
 }
 QPushButton:pressed { background-color: #c0d8f0; }
+QWidget#modelTableFooter {
+    background-color: #edf2f8;
+    border-top: 1px solid #c7d2df;
+}
+QPushButton#modelMiniAdd, QPushButton#materialMiniAdd {
+    background-color: #dbe9f8;
+    color: #124e90;
+    border: 1px solid #8eb0d4;
+    border-radius: 8px;
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 0px 0px 5px 0px;
+    text-align: center;
+}
+QPushButton#modelMiniAdd:hover, QPushButton#materialMiniAdd:hover {
+    background-color: #cee1f6;
+    border-color: #6c96c5;
+}
+QPushButton#modelMiniAdd:pressed, QPushButton#materialMiniAdd:pressed { background-color: #bdd4ef; }
+QPushButton#modelMiniDel, QPushButton#materialMiniDel {
+    background-color: #eef1f5;
+    color: #4a5a70;
+    border: 1px solid #b7c2cf;
+    border-radius: 8px;
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 0px 0px 5px 0px;
+    text-align: center;
+}
+QPushButton#modelMiniDel:hover, QPushButton#materialMiniDel:hover {
+    background-color: #e1e6ed;
+    border-color: #9ba9ba;
+}
+QPushButton#modelMiniDel:pressed, QPushButton#materialMiniDel:pressed { background-color: #d4dce6; }
 """
 
 # Tema oscuro (alternativa al claro); incluye lista desplegable del QComboBox legible.
@@ -400,12 +446,24 @@ QDockWidget {
     border: 1px solid #4a4a50;
 }
 QDockWidget::title {
-    background-color: #333333;
-    color: #b8babf;
-    padding: 5px 8px;
-    font-weight: 600;
+    background-color: #313841;
+    color: #e6ebf2;
+    padding: 7px 10px;
+    font-weight: 700;
+    font-size: 10pt;
+    letter-spacing: 0.2px;
     border: none;
-    border-bottom: 1px solid #4a4a50;
+    border-bottom: 1px solid #4f5b67;
+}
+QWidget#dockTitleBar {
+    background-color: #313841;
+    border-bottom: 1px solid #4f5b67;
+}
+QLabel#dockTitleLabel {
+    color: #e6ebf2;
+    font-size: 10pt;
+    font-weight: 700;
+    padding: 6px 10px;
 }
 QTabWidget::pane {
     border: 1px solid #4a4a50;
@@ -413,8 +471,8 @@ QTabWidget::pane {
     margin: 0;
 }
 QTabBar::tab {
-    background-color: #38383c;
-    color: #a0a2a8;
+    background-color: #40444b;
+    color: #d2d8e2;
     padding: 5px 14px;
     margin-right: 2px;
     border: 1px solid #4a4a50;
@@ -424,11 +482,11 @@ QTabBar::tab {
 }
 QTabBar::tab:selected {
     background-color: #2d2d30;
-    color: #e8e9eb;
+    color: #f2f4f8;
     border: 1px solid #4a4a50;
-    border-bottom: 2px solid #5a6570;
+    border-bottom: 2px solid #7ea6d1;
 }
-QTabBar::tab:hover:!selected { background-color: #3f3f44; }
+QTabBar::tab:hover:!selected { background-color: #4a4f57; }
 QTableWidget {
     background-color: #2d2d30;
     alternate-background-color: #323236;
@@ -441,8 +499,8 @@ QTableWidget {
 QTableWidget::item { padding: 1px 6px; border: none; }
 QTableWidget::item:selected { background-color: #4a5568; color: #f2f3f5; }
 QHeaderView::section {
-    background-color: #38383c;
-    color: #a8aaaf;
+    background-color: #454a52;
+    color: #f0f3f8;
     padding: 4px 6px;
     border: none;
     border-right: 1px solid #3f3f42;
@@ -481,6 +539,40 @@ QPushButton {
 }
 QPushButton:hover { background-color: #45454a; border-color: #606068; }
 QPushButton:pressed { background-color: #323236; }
+QWidget#modelTableFooter {
+    background-color: #30353d;
+    border-top: 1px solid #4b5560;
+}
+QPushButton#modelMiniAdd, QPushButton#materialMiniAdd {
+    background-color: #30465f;
+    color: #9cc4ee;
+    border: 1px solid #54759b;
+    border-radius: 8px;
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 0px 0px 5px 0px;
+    text-align: center;
+}
+QPushButton#modelMiniAdd:hover, QPushButton#materialMiniAdd:hover {
+    background-color: #395273;
+    border-color: #6c8fb7;
+}
+QPushButton#modelMiniAdd:pressed, QPushButton#materialMiniAdd:pressed { background-color: #2a3e57; }
+QPushButton#modelMiniDel, QPushButton#materialMiniDel {
+    background-color: #3a4149;
+    color: #c5d1de;
+    border: 1px solid #616d79;
+    border-radius: 8px;
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 0px 0px 5px 0px;
+    text-align: center;
+}
+QPushButton#modelMiniDel:hover, QPushButton#materialMiniDel:hover {
+    background-color: #444c55;
+    border-color: #758392;
+}
+QPushButton#modelMiniDel:pressed, QPushButton#materialMiniDel:pressed { background-color: #343b43; }
 """
 
 
@@ -743,6 +835,9 @@ class FtoolMainWindow(_QMainWindow):
         self._escala_deform = 1.0
         self._ipn_dims = IPN_DEFAULT.copy()
         self._longitud_vector = 45.0
+        self._history_limit = 5
+        self._undo_stack: List[Dict[str, Any]] = []
+        self._redo_stack: List[Dict[str, Any]] = []
 
         if backend == "PySide6":
             from PySide6.QtCore import QSize
@@ -811,6 +906,10 @@ class FtoolMainWindow(_QMainWindow):
         self._top_toolbar.addWidget(_mk_tb("new",  "Nuevo modelo",    self._new_project))
         self._top_toolbar.addWidget(_mk_tb("open", "Abrir JSON…",     self._open_json))
         self._top_toolbar.addWidget(_mk_tb("save", "Guardar JSON…",   self._save_json))
+        self._btn_undo = _mk_tb("undo", "Deshacer (Ctrl+Z)", self._undo_model_change)
+        self._btn_redo = _mk_tb("redo", "Rehacer (Ctrl+Y)", self._redo_model_change)
+        self._top_toolbar.addWidget(self._btn_undo)
+        self._top_toolbar.addWidget(self._btn_redo)
         self._top_toolbar.addSeparator()
 
         self._btn_nodo  = _mk_tb("node",   "Agregar nodo",              self._dlg_add_node)
@@ -967,6 +1066,10 @@ class FtoolMainWindow(_QMainWindow):
         self._tabs_model = QTabWidget()
         self._tabs_model.setDocumentMode(True)
         self._tabs_model.setMovable(False)
+        try:
+            self._tabs_model.tabBar().setExpanding(True)
+        except Exception:
+            pass
 
         self._tbl_nodes = QTableWidget()
         self._tbl_bars  = QTableWidget()
@@ -998,9 +1101,56 @@ class FtoolMainWindow(_QMainWindow):
             tbl.horizontalHeader().setStretchLastSection(True)
             tbl.horizontalHeader().setHighlightSections(False)
 
-        self._tabs_model.addTab(self._tbl_nodes, "Nodos")
-        self._tabs_model.addTab(self._tbl_bars,  "Barras")
-        self._tabs_model.addTab(self._tbl_loads, "Cargas")
+        def _mk_model_tab(table: Any, add_tip: str, add_slot: Any) -> Any:
+            wrap = QWidget()
+            lay_tab = QVBoxLayout(wrap)
+            lay_tab.setContentsMargins(0, 0, 0, 0)
+            lay_tab.setSpacing(0)
+            lay_tab.addWidget(table, 1)
+            footer_wrap = QWidget()
+            footer_wrap.setObjectName("modelTableFooter")
+            footer = QHBoxLayout(footer_wrap)
+            footer.setContentsMargins(8, 6, 8, 6)
+            footer.setSpacing(6)
+            b_add = QPushButton("+")
+            b_del = QPushButton("-")
+            b_add.setObjectName("modelMiniAdd")
+            b_del.setObjectName("modelMiniDel")
+            if backend == "PySide6":
+                _sp_exp = QSizePolicy.Policy.Expanding
+                _sp_fix = QSizePolicy.Policy.Fixed
+            else:
+                _sp_exp = QSizePolicy.Expanding
+                _sp_fix = QSizePolicy.Fixed
+            b_add.setSizePolicy(_sp_exp, _sp_fix)
+            b_del.setSizePolicy(_sp_exp, _sp_fix)
+            b_add.setMinimumHeight(30)
+            b_del.setMinimumHeight(30)
+            b_add.setToolTip(add_tip)
+            b_del.setToolTip("Eliminar fila seleccionada")
+            b_add.setCursor(Qt.PointingHandCursor)
+            b_del.setCursor(Qt.PointingHandCursor)
+            _btn_font = b_add.font()
+            _btn_font.setBold(True)
+            _btn_font.setPointSize(max(int(_btn_font.pointSize()), 12))
+            b_add.setFont(_btn_font)
+            b_del.setFont(_btn_font)
+            b_add.clicked.connect(add_slot)
+            b_del.clicked.connect(self._on_delete_selection)
+            footer.addWidget(b_add, 1)
+            footer.addWidget(b_del, 1)
+            lay_tab.addWidget(footer_wrap, 0)
+            return wrap
+
+        self._tabs_model.addTab(
+            _mk_model_tab(self._tbl_nodes, "Añadir nodo", self._dlg_add_node), "Nodos"
+        )
+        self._tabs_model.addTab(
+            _mk_model_tab(self._tbl_bars, "Añadir barra", self._dlg_add_bar), "Barras"
+        )
+        self._tabs_model.addTab(
+            _mk_model_tab(self._tbl_loads, "Añadir carga puntual en barra", self._dlg_add_load), "Cargas"
+        )
 
         self._IDX_TAB_INSPECTOR_MODELO = 0
         self._IDX_TAB_INSPECTOR_MAT    = 1
@@ -1008,6 +1158,7 @@ class FtoolMainWindow(_QMainWindow):
         model_wrap = QWidget()
         mw_lay = QVBoxLayout(model_wrap)
         mw_lay.setContentsMargins(0, 0, 0, 0)
+        mw_lay.setSpacing(0)
         mw_lay.addWidget(self._tabs_model)
 
         self._tbl_materials = QTableWidget()
@@ -1025,15 +1176,62 @@ class FtoolMainWindow(_QMainWindow):
 
         mat_wrap = QWidget()
         mat_lay = QVBoxLayout(mat_wrap)
-        mat_lay.setContentsMargins(4, 4, 4, 4)
-        mat_lay.addWidget(self._tbl_materials)
+        mat_lay.setContentsMargins(0, 0, 0, 0)
+        mat_lay.setSpacing(0)
+        mat_lay.addWidget(self._tbl_materials, 1)
+        mat_footer_wrap = QWidget()
+        mat_footer_wrap.setObjectName("modelTableFooter")
+        mat_footer = QHBoxLayout(mat_footer_wrap)
+        mat_footer.setContentsMargins(8, 6, 8, 6)
+        mat_footer.setSpacing(6)
+        self._btn_mat_add = QPushButton("+")
+        self._btn_mat_delete = QPushButton("-")
+        self._btn_mat_add.setObjectName("materialMiniAdd")
+        self._btn_mat_delete.setObjectName("materialMiniDel")
+        if backend == "PySide6":
+            _sp_exp = QSizePolicy.Policy.Expanding
+            _sp_fix = QSizePolicy.Policy.Fixed
+        else:
+            _sp_exp = QSizePolicy.Expanding
+            _sp_fix = QSizePolicy.Fixed
+        self._btn_mat_add.setSizePolicy(_sp_exp, _sp_fix)
+        self._btn_mat_delete.setSizePolicy(_sp_exp, _sp_fix)
+        self._btn_mat_add.setMinimumHeight(30)
+        self._btn_mat_delete.setMinimumHeight(30)
+        self._btn_mat_add.setToolTip("Nuevo material o sección")
+        self._btn_mat_delete.setToolTip("Eliminar material seleccionado")
+        self._btn_mat_add.setCursor(Qt.PointingHandCursor)
+        self._btn_mat_delete.setCursor(Qt.PointingHandCursor)
+        _btn_font_mat = self._btn_mat_add.font()
+        _btn_font_mat.setBold(True)
+        _btn_font_mat.setPointSize(max(int(_btn_font_mat.pointSize()), 12))
+        self._btn_mat_add.setFont(_btn_font_mat)
+        self._btn_mat_delete.setFont(_btn_font_mat)
+        self._btn_mat_add.clicked.connect(lambda: self._dlg_material_editor(None))
+        self._btn_mat_delete.clicked.connect(self._on_delete_selection)
+        mat_footer.addWidget(self._btn_mat_add, 1)
+        mat_footer.addWidget(self._btn_mat_delete, 1)
+        mat_lay.addWidget(mat_footer_wrap, 0)
 
         self._outer_inspector = QTabWidget()
         self._outer_inspector.setDocumentMode(True)
+        try:
+            self._outer_inspector.tabBar().setExpanding(True)
+        except Exception:
+            pass
         self._outer_inspector.addTab(model_wrap, "Modelo")
         self._outer_inspector.addTab(mat_wrap, "Materiales y secciones")
 
         self._inspector_dock.setWidget(self._outer_inspector)
+        dock_title_bar = QWidget()
+        dock_title_bar.setObjectName("dockTitleBar")
+        dock_title_lay = QHBoxLayout(dock_title_bar)
+        dock_title_lay.setContentsMargins(0, 0, 0, 0)
+        dock_title_lay.setSpacing(0)
+        dock_title_lbl = QLabel("Tablas del modelo")
+        dock_title_lbl.setObjectName("dockTitleLabel")
+        dock_title_lay.addWidget(dock_title_lbl)
+        self._inspector_dock.setTitleBarWidget(dock_title_bar)
         right_dock = getattr(Qt, "RightDockWidgetArea", None)
         if right_dock is None:
             right_dock = 2
@@ -1135,6 +1333,10 @@ class FtoolMainWindow(_QMainWindow):
 
             _f5_sc = QShortcut(QKeySequence(Qt.Key_F5), self)
             _f5_sc.activated.connect(self._on_analyze)
+            _undo_sc = QShortcut(QKeySequence("Ctrl+Z"), self)
+            _undo_sc.activated.connect(self._undo_model_change)
+            _redo_sc = QShortcut(QKeySequence("Ctrl+Y"), self)
+            _redo_sc.activated.connect(self._redo_model_change)
         except Exception:
             pass
 
@@ -1162,7 +1364,63 @@ class FtoolMainWindow(_QMainWindow):
         self._sync_ws_toggle_buttons()
         self._on_workspace_page_changed(self._workspace_stack.currentIndex())
         self._refresh_resultados_tables_ui()
+        self._update_undo_redo_buttons()
         _startup_progress_tick(startup_progress, 100, "Listo")
+
+    def _snapshot_spec(self) -> Dict[str, Any]:
+        return copy.deepcopy(self._spec)
+
+    def _push_undo_snapshot(self) -> None:
+        snap = self._snapshot_spec()
+        if self._undo_stack and self._undo_stack[-1] == snap:
+            return
+        self._undo_stack.append(snap)
+        if len(self._undo_stack) > self._history_limit:
+            self._undo_stack = self._undo_stack[-self._history_limit :]
+        self._redo_stack.clear()
+        self._update_undo_redo_buttons()
+
+    def _reset_history(self) -> None:
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._update_undo_redo_buttons()
+
+    def _update_undo_redo_buttons(self) -> None:
+        try:
+            self._btn_undo.setEnabled(bool(self._undo_stack))
+            self._btn_redo.setEnabled(bool(self._redo_stack))
+        except Exception:
+            pass
+
+    def _undo_model_change(self) -> None:
+        if not self._undo_stack:
+            self.statusBar().showMessage("Deshacer: no hay más cambios.")
+            self._update_undo_redo_buttons()
+            return
+        self._redo_stack.append(self._snapshot_spec())
+        if len(self._redo_stack) > self._history_limit:
+            self._redo_stack = self._redo_stack[-self._history_limit :]
+        self._spec = self._undo_stack.pop()
+        self._update_undo_redo_buttons()
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+        self.statusBar().showMessage("Se deshizo el último cambio (Ctrl+Z).")
+
+    def _redo_model_change(self) -> None:
+        if not self._redo_stack:
+            self.statusBar().showMessage("Rehacer: no hay cambios para rehacer.")
+            self._update_undo_redo_buttons()
+            return
+        self._undo_stack.append(self._snapshot_spec())
+        if len(self._undo_stack) > self._history_limit:
+            self._undo_stack = self._undo_stack[-self._history_limit :]
+        self._spec = self._redo_stack.pop()
+        self._update_undo_redo_buttons()
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+        self.statusBar().showMessage("Se rehizo el cambio (Ctrl+Y).")
 
     def _set_ui_theme(self, name: str) -> None:
         self._ui_theme = "dark" if str(name).lower() == "dark" else "light"
@@ -2412,6 +2670,7 @@ class FtoolMainWindow(_QMainWindow):
                 "tf": vtf.value(),
             }
 
+        self._push_undo_snapshot()
         mats[nm] = entry
         self._invalidate_solution()
         self._refresh_tree()
@@ -2478,6 +2737,7 @@ class FtoolMainWindow(_QMainWindow):
             ),
         ):
             return
+        self._push_undo_snapshot()
         del mats[mat_name]
         self._invalidate_solution()
         self._refresh_tree()
@@ -2906,6 +3166,7 @@ class FtoolMainWindow(_QMainWindow):
 
     def _new_project(self) -> None:
         self._spec = _default_spec()
+        self._reset_history()
         self._invalidate_solution()
         self._refresh_tree()
         self._redraw()
@@ -2923,6 +3184,7 @@ class FtoolMainWindow(_QMainWindow):
         except Exception as e:
             self._QMessageBox.critical(self, "Error", str(e))
             return
+        self._reset_history()
         self._invalidate_solution()
         self._refresh_tree()
         self._redraw()
@@ -2964,6 +3226,7 @@ class FtoolMainWindow(_QMainWindow):
             return
         fix = [cb.isChecked() for cb in checks]
         nid = sp_id.value()
+        self._push_undo_snapshot()
         self._spec["nodes"] = [n for n in self._spec["nodes"] if n["id"] != nid]
         self._spec["nodes"].append(
             {"id": nid, "x": sx.value(), "y": sy.value(), "z": sz.value(), "fix": fix}
@@ -3006,6 +3269,7 @@ class FtoolMainWindow(_QMainWindow):
         mname = cb_mat.currentData()
         if mname is None:
             mname = (cb_mat.currentText() or "").strip() or "default"
+        self._push_undo_snapshot()
         self._spec["bars"] = [b for b in self._spec["bars"] if b["id"] != bid]
         self._spec["bars"].append(
             {"id": bid, "i": cbi.currentData(), "j": cbj.currentData(), "material": str(mname)}
@@ -3052,6 +3316,7 @@ class FtoolMainWindow(_QMainWindow):
         bb.rejected.connect(d.reject)
         if self._dialog_accepted(d) is False:
             return
+        self._push_undo_snapshot()
         self._spec.setdefault("loads_point", []).append(
             {
                 "id": len(self._spec.get("loads_point") or []) + 1,
@@ -3105,6 +3370,7 @@ class FtoolMainWindow(_QMainWindow):
         bb.rejected.connect(d.reject)
         if self._dialog_accepted(d) is False:
             return
+        self._push_undo_snapshot()
         node["x"] = sx.value()
         node["y"] = sy.value()
         node["z"] = sz.value()
@@ -3147,6 +3413,7 @@ class FtoolMainWindow(_QMainWindow):
         bb.rejected.connect(d.reject)
         if self._dialog_accepted(d) is False:
             return
+        self._push_undo_snapshot()
         bar["i"] = int(cbi.currentData())
         bar["j"] = int(cbj.currentData())
         mm = cb_mat.currentData()
@@ -3209,6 +3476,7 @@ class FtoolMainWindow(_QMainWindow):
         bb.rejected.connect(d.reject)
         if self._dialog_accepted(d) is False:
             return
+        self._push_undo_snapshot()
         c["bar_id"] = int(cb_bar.currentData())
         c["x"] = sx.value()
         c["y"] = sy.value()
@@ -3305,6 +3573,7 @@ class FtoolMainWindow(_QMainWindow):
             )
             if r != MB.Yes:
                 return
+        self._push_undo_snapshot()
         self._spec["loads_point"] = [
             c for c in self._spec.get("loads_point") or [] if c.get("bar_id") not in bars_drop
         ]
@@ -3315,6 +3584,7 @@ class FtoolMainWindow(_QMainWindow):
         self._redraw()
 
     def _delete_bar(self, bid: int) -> None:
+        self._push_undo_snapshot()
         self._spec["loads_point"] = [
             c for c in self._spec.get("loads_point") or [] if c.get("bar_id") != bid
         ]
@@ -3326,6 +3596,7 @@ class FtoolMainWindow(_QMainWindow):
     def _delete_load(self, index: int) -> None:
         loads = self._spec.setdefault("loads_point", [])
         if 0 <= index < len(loads):
+            self._push_undo_snapshot()
             loads.pop(index)
         self._invalidate_solution()
         self._refresh_tree()
