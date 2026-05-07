@@ -13,15 +13,19 @@ import pandas as pd
 
 # Orden de hojas en Excel y en el PDF (misma información).
 RESULTADOS_SHEET_ORDER: List[str] = [
-    "reacciones_de_estructura_Globales",
-    "F_interna_Locales",
-    "Desplazamientos_globales_D",
-    "Sistema_reducido_Kll_Fl",
-    "Cargas_Globales_en_nudos",
-    "reacciones_locales_de_empotramiento",
-    "Vector_Nodal_Equivalente",
+    "Resumen_Barras",
     "Ejes_Locales",
+    "K_locales",
+    "F_locales_de_cargas",
+    "R_locales_de_empotramiento_cargas",
+    "Cargas_nodales_locales",
+    "Matriz_R_2D",
     "Matriz_Rotacion_T",
+    "Cargas_nodales_equivalentes_Globales",
+    "Sistema_reducido_Kll_Fl",
+    "Desplazamientos_globales_D",
+    "Solicitacion_extremo_de_barra_Globales",
+    "Solicitacion_extremo_de_barra_Locales",
 ]
 
 
@@ -55,6 +59,59 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
             out[: min(length, arr.size)] = arr.ravel()[:length]
             return out
         return arr
+
+    def _coord_xyz(nodo_obj: Any) -> tuple[float, float, float]:
+        if nodo_obj is None:
+            return (0.0, 0.0, 0.0)
+        x = float(getattr(nodo_obj, "x", 0.0) or 0.0)
+        y = float(getattr(nodo_obj, "y", 0.0) or 0.0)
+        z = float(getattr(nodo_obj, "z", 0.0) or 0.0)
+        return (x, y, z)
+
+    def _restricciones_txt(nodo_obj: Any) -> str:
+        if nodo_obj is None:
+            return "Libre"
+        raw = getattr(nodo_obj, "restricciones", None)
+        if raw is None:
+            return "Libre"
+        vals = list(raw)[:6]
+        vals += [False] * (6 - len(vals))
+        names = ["Ux", "Uy", "Uz", "Rx", "Ry", "Rz"]
+        fixed = [names[i] for i, v in enumerate(vals) if bool(v)]
+        return ",".join(fixed) if fixed else "Libre"
+
+    datos_resumen_barras = []
+    for barra in getattr(estructura, "barras", []):
+        ni_obj = getattr(barra, "nodo_i_obj", None)
+        nf_obj = getattr(barra, "nodo_f_obj", None)
+        xi, yi, zi = _coord_xyz(ni_obj)
+        xf, yf, zf = _coord_xyz(nf_obj)
+        i_y = getattr(barra, "I_y", 0.0)
+        i_z = getattr(barra, "I_z", 0.0)
+        datos_resumen_barras.append(
+            {
+                "Id": getattr(barra, "id", None),
+                "Ubicación i - X": xi,
+                "Ubicación i - Y": yi,
+                "Ubicación i - Z": zi,
+                "Ubicación f - X": xf,
+                "Ubicación f - Y": yf,
+                "Ubicación f - Z": zf,
+                "Restricciones i": _restricciones_txt(ni_obj),
+                "Restricciones f": _restricciones_txt(nf_obj),
+                "Longitud (cm)": float(getattr(barra, "L", 0.0) or 0.0),
+                "Área A (cm2)": float(getattr(barra, "A", 0.0) or 0.0),
+                "Inercia I_y (cm4)": float(i_y or 0.0),
+                "Inercia I_z (cm4)": float(i_z or 0.0),
+                "G": float(getattr(barra, "G", 0.0) or 0.0),
+                "E": float(getattr(barra, "E", 0.0) or 0.0),
+                "v": float(getattr(barra, "nu", np.nan)),
+                "Peso específico": float(getattr(barra, "gamma", np.nan)),
+                "J": float(getattr(barra, "J", 0.0) or 0.0),
+                "Material": str(getattr(barra, "material", "default")),
+            }
+        )
+    df_resumen_barras = pd.DataFrame(datos_resumen_barras)
 
     datos_cargas_globales_nudos = []
     for barra in getattr(estructura, "barras", []):
@@ -109,6 +166,27 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
         )
     df_f_interna_locales = pd.DataFrame(datos_f_interna_locales)
 
+    datos_f_locales_cargas = []
+    for barra in getattr(estructura, "barras", []):
+        for carga in getattr(barra, "cargas", []) or []:
+            f_loc = np.asarray(getattr(carga, "f_local", np.zeros(3)), dtype=float).ravel()
+            if f_loc.size < 3:
+                tmp = np.zeros(3, dtype=float)
+                tmp[: f_loc.size] = f_loc
+                f_loc = tmp
+            datos_f_locales_cargas.append(
+                {
+                    "Carga ID": getattr(carga, "id", None),
+                    "Barra ID": getattr(barra, "id", None),
+                    "Nodo Inicial": getattr(barra, "nodo_i", None),
+                    "Nodo Final": getattr(barra, "nodo_f", None),
+                    "Fx_local": float(f_loc[0]),
+                    "Fy_local": float(f_loc[1]),
+                    "Fz_local": float(f_loc[2]),
+                }
+            )
+    df_f_locales_cargas = pd.DataFrame(datos_f_locales_cargas)
+
     datos_reacciones_locales_nodos = []
     for barra in getattr(estructura, "barras", []):
         reacc_i_local = _safe_array(barra, "reaccion_de_empotramiento_i_local", 6)
@@ -123,6 +201,58 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
             }
         )
     df_reacciones_locales_nodos = pd.DataFrame(datos_reacciones_locales_nodos)
+
+    datos_r_locales_emp_cargas = []
+    nombres_reac = [
+        "Rx_i",
+        "Ry_i",
+        "Rz_i",
+        "RMx_i",
+        "RMy_i",
+        "RMz_i",
+        "Rx_f",
+        "Ry_f",
+        "Rz_f",
+        "RMx_f",
+        "RMy_f",
+        "RMz_f",
+    ]
+    for barra in getattr(estructura, "barras", []):
+        for carga in getattr(barra, "cargas", []) or []:
+            r_emp = np.asarray(getattr(carga, "r_empotramiento_local", np.zeros(12)), dtype=float).ravel()
+            if r_emp.size < 12:
+                tmp = np.zeros(12, dtype=float)
+                tmp[: r_emp.size] = r_emp
+                r_emp = tmp
+            datos_r_locales_emp_cargas.append(
+                {
+                    "Carga ID": getattr(carga, "id", None),
+                    "Barra ID": getattr(barra, "id", None),
+                    "Nodo Inicial": getattr(barra, "nodo_i", None),
+                    "Nodo Final": getattr(barra, "nodo_f", None),
+                    **{nombres_reac[i]: float(r_emp[i]) for i in range(12)},
+                }
+            )
+    df_r_locales_emp_cargas = pd.DataFrame(datos_r_locales_emp_cargas)
+
+    datos_cargas_nodales_locales = []
+    for barra in getattr(estructura, "barras", []):
+        for carga in getattr(barra, "cargas", []) or []:
+            c_nod = np.asarray(getattr(carga, "carga_nodal_local", np.zeros(12)), dtype=float).ravel()
+            if c_nod.size < 12:
+                tmp = np.zeros(12, dtype=float)
+                tmp[: c_nod.size] = c_nod
+                c_nod = tmp
+            datos_cargas_nodales_locales.append(
+                {
+                    "Carga ID": getattr(carga, "id", None),
+                    "Barra ID": getattr(barra, "id", None),
+                    "Nodo Inicial": getattr(barra, "nodo_i", None),
+                    "Nodo Final": getattr(barra, "nodo_f", None),
+                    **{nombres_reac[i]: float(c_nod[i]) for i in range(12)},
+                }
+            )
+    df_cargas_nodales_locales = pd.DataFrame(datos_cargas_nodales_locales)
 
     nombres_dofs_nodo = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     datos_vector_nodal = []
@@ -210,7 +340,6 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
                 "Barra ID": getattr(barra, "id", None),
                 "Nodo Inicial": getattr(barra, "nodo_i", None),
                 "Nodo Final": getattr(barra, "nodo_f", None),
-                "Longitud (cm)": getattr(barra, "L", 0.0) or 0.0,
                 "tita (deg)": getattr(barra, "tita", 0.0) or 0.0,
                 "x_local_x": xlx,
                 "x_local_y": xly,
@@ -246,15 +375,64 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
             datos_matriz_T.append(fila)
     df_matriz_T = pd.DataFrame(datos_matriz_T)
 
+    datos_k_locales = []
+    for barra in getattr(estructura, "barras", []):
+        try:
+            Kloc = np.asarray(barra._calcular_K_local(), dtype=float)
+            if Kloc.shape != (12, 12):
+                Kloc = np.zeros((12, 12), dtype=float)
+        except Exception:
+            Kloc = np.zeros((12, 12), dtype=float)
+
+        for fila_idx in range(12):
+            fila = {
+                "Barra ID": getattr(barra, "id", None),
+                "Nodo Inicial": getattr(barra, "nodo_i", None),
+                "Nodo Final": getattr(barra, "nodo_f", None),
+                "Fila": fila_idx + 1,
+            }
+            for col_idx in range(12):
+                fila[f"C{col_idx + 1}"] = float(Kloc[fila_idx, col_idx])
+            datos_k_locales.append(fila)
+    df_k_locales = pd.DataFrame(datos_k_locales)
+
+    datos_matriz_R = []
+    for barra in getattr(estructura, "barras", []):
+        try:
+            R = np.asarray(barra.construir_matriz_rotacion_2d_12x12(), dtype=float)
+            if R.shape != (12, 12):
+                R = np.zeros((12, 12), dtype=float)
+        except Exception:
+            R = np.zeros((12, 12), dtype=float)
+
+        for fila_idx in range(12):
+            fila = {
+                "Barra ID": getattr(barra, "id", None),
+                "Nodo Inicial": getattr(barra, "nodo_i", None),
+                "Nodo Final": getattr(barra, "nodo_f", None),
+                "Fila": fila_idx + 1,
+            }
+            for col_idx in range(12):
+                fila[f"C{col_idx + 1}"] = float(R[fila_idx, col_idx])
+            datos_matriz_R.append(fila)
+    df_matriz_R = pd.DataFrame(datos_matriz_R)
+
     return {
+        "Resumen_Barras": df_resumen_barras,
+        "Ejes_Locales": df_ejes_locales,
+        "K_locales": df_k_locales,
+        "Matriz_R_2D": df_matriz_R,
+        "F_locales_de_cargas": df_f_locales_cargas,
+        "R_locales_de_empotramiento_cargas": df_r_locales_emp_cargas,
+        "Cargas_nodales_locales": df_cargas_nodales_locales,
+        "Cargas_nodales_equivalentes_Globales": df_cargas_globales_nudos.copy(),
+        "Solicitacion_extremo_de_barra_Globales": df_reacciones_estructura_global.copy(),
         "reacciones_de_estructura_Globales": df_reacciones_estructura_global,
-        "F_interna_Locales": df_f_interna_locales,
+        "Solicitacion_extremo_de_barra_Locales": df_f_interna_locales,
         "Desplazamientos_globales_D": df_desplazamientos,
         "Sistema_reducido_Kll_Fl": df_sistema_reducido,
-        "Cargas_Globales_en_nudos": df_cargas_globales_nudos,
         "reacciones_locales_de_empotramiento": df_reacciones_locales_nodos,
         "Vector_Nodal_Equivalente": df_vector_nodal,
-        "Ejes_Locales": df_ejes_locales,
         "Matriz_Rotacion_T": df_matriz_T,
     }
 
@@ -282,10 +460,12 @@ def write_resultados_excel(path: Path, dfs: Dict[str, pd.DataFrame]) -> None:
     sheets_map = {name: dfs[name] for name in RESULTADOS_SHEET_ORDER if name in dfs}
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         for sheet_name, df in sheets_map.items():
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            export_name = "Ternas_locales_en_Ejes_globales" if sheet_name == "Ejes_Locales" else sheet_name
+            df.to_excel(writer, sheet_name=export_name, index=False)
 
         for sheet_name, df in sheets_map.items():
-            worksheet = writer.sheets.get(sheet_name)
+            export_name = "Ternas_locales_en_Ejes_globales" if sheet_name == "Ejes_Locales" else sheet_name
+            worksheet = writer.sheets.get(export_name)
             if worksheet is None or df is None:
                 continue
             for idx, col_name in enumerate(df.columns, 1):

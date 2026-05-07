@@ -42,6 +42,8 @@ class CargaPuntual:
         self.F_y = F_y  # Fuerza en Y
         self.F_z = F_z  # Fuerza en Z
         self.f_local = np.zeros(3)  # Fuerza en coordenadas locales de la barra
+        self.r_empotramiento_local = np.zeros(12)  # Vector local equivalente de empotramiento por carga
+        self.carga_nodal_local = np.zeros(12)  # Carga nodal local equivalente por carga (opuesta a R empotramiento)
         # Momento torsor puntual local M_x (sobre el eje de barra); 0 si no hay.
         self.mx_local = 0.0
 
@@ -141,6 +143,8 @@ def reacciones_de_empotramiento(self, barra):
         f_empotramiento[8] = -Qj_z
         f_empotramiento[10] = Mj_y
         f_empotramiento[11] = Mj_z
+        self.r_empotramiento_local = f_empotramiento.copy()
+        self.carga_nodal_local = -f_empotramiento.copy()
 
         # (Si tenés que sumar torsión o momento puntual, agregar f_emp[3] y f_emp[9])
 

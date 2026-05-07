@@ -90,7 +90,14 @@ def _material_lookup(spec: Dict[str, Any], name: Optional[str]) -> Dict[str, flo
     if key not in mats:
         raise ValueError(f"Material no definido: {key!r}. Claves: {list(mats.keys())}")
     m = mats[key]
-    return _resolve_material_stiffness(m, key)
+    out = _resolve_material_stiffness(m, key)
+    # Metadatos útiles para reportes/exportaciones.
+    out["material_name"] = str(key)
+    nu_raw = m.get("nu")
+    ga_raw = m.get("gamma")
+    out["nu"] = float(nu_raw) if nu_raw is not None and nu_raw != "" else np.nan
+    out["gamma"] = float(ga_raw) if ga_raw is not None and ga_raw != "" else np.nan
+    return out
 
 
 def _net_global_force(load: Dict[str, Any]) -> np.ndarray:
@@ -164,6 +171,10 @@ def build_estructura_from_spec(spec: Dict[str, Any]) -> Estructura:
             J=mat["J"],
             tita=raw.get("tita"),
         )
+        # Guardamos metadatos de material para tablas de resultados.
+        b.material = mat.get("material_name", "default")
+        b.nu = mat.get("nu", np.nan)
+        b.gamma = mat.get("gamma", np.nan)
         b.nodo_i_obj = nodos_dict.get(ni)
         b.nodo_f_obj = nodos_dict.get(nf)
         if b.nodo_i_obj is None or b.nodo_f_obj is None:

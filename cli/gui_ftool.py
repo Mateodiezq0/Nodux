@@ -599,14 +599,17 @@ IPN_DEFAULT = {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
 
 # Títulos cortos para pestañas del visor de resultados (mismas claves que ``cli/resultados_export``).
 _RESULTADOS_TAB_TITLES = {
-    "reacciones_de_estructura_Globales": "Reacciones globales",
-    "F_interna_Locales": "F internas locales",
-    "Desplazamientos_globales_D": "Desplazamientos D",
+    "K_locales": "K locales",
+    "Matriz_R_2D": "Matriz R (12×12)",
+    "F_locales_de_cargas": "F locales (cargas)",
+    "R_locales_de_empotramiento_cargas": "R locales de empot. (reacciones)",
+    "Cargas_nodales_locales": "Cargas nodales locales",
+    "Cargas_nodales_equivalentes_Globales": "Cargas nodales equivalentes Globales",
+    "Solicitacion_extremo_de_barra_Globales": "Solicitación extremo de barra Globales",
+    "Solicitacion_extremo_de_barra_Locales": "Solicitación extremo de barra Locales",
+    "Desplazamientos_globales_D": "Desplazamientos D Globales",
     "Sistema_reducido_Kll_Fl": "Sistema reducido Kll, Fl",
-    "Cargas_Globales_en_nudos": "Cargas en nudos",
-    "reacciones_locales_de_empotramiento": "Reacc. locales empotr.",
-    "Vector_Nodal_Equivalente": "Vector nodal equivalente",
-    "Ejes_Locales": "Ejes locales",
+    "Ejes_Locales": "Ternas locales en Ejes globales",
     "Matriz_Rotacion_T": "Matriz T (12×12)",
 }
 
@@ -1048,6 +1051,44 @@ class FtoolMainWindow(_QMainWindow):
         rl.addLayout(res_tb)
         self._tabs_resultados_sheets = QTabWidget()
         self._tabs_resultados_sheets.setDocumentMode(True)
+        self._tabs_resultados_sheets.setUsesScrollButtons(True)
+        try:
+            self._tabs_resultados_sheets.tabBar().setExpanding(False)
+        except Exception:
+            pass
+        nav_wrap = QWidget()
+        nav_lay = QHBoxLayout(nav_wrap)
+        nav_lay.setContentsMargins(0, 0, 0, 0)
+        nav_lay.setSpacing(2)
+        self._btn_res_tab_prev = QToolButton()
+        self._btn_res_tab_prev.setText("◀")
+        self._btn_res_tab_prev.setToolTip("Hoja anterior")
+        self._btn_res_tab_prev.setStyleSheet(
+            "QToolButton { background:#d8e9ff; color:#114a8b; border:1px solid #8fb3de; "
+            "border-radius:3px; padding:1px 6px; font-weight:700; } "
+            "QToolButton:hover { background:#bcd9fb; border-color:#6f9ed3; } "
+            "QToolButton:pressed { background:#a8cbf4; }"
+        )
+        self._btn_res_tab_prev.clicked.connect(lambda: self._shift_resultados_tab(-1))
+        self._btn_res_tab_next = QToolButton()
+        self._btn_res_tab_next.setText("▶")
+        self._btn_res_tab_next.setToolTip("Hoja siguiente")
+        self._btn_res_tab_next.setStyleSheet(
+            "QToolButton { background:#d8e9ff; color:#114a8b; border:1px solid #8fb3de; "
+            "border-radius:3px; padding:1px 6px; font-weight:700; } "
+            "QToolButton:hover { background:#bcd9fb; border-color:#6f9ed3; } "
+            "QToolButton:pressed { background:#a8cbf4; }"
+        )
+        self._btn_res_tab_next.clicked.connect(lambda: self._shift_resultados_tab(1))
+        nav_lay.addWidget(self._btn_res_tab_prev)
+        nav_lay.addWidget(self._btn_res_tab_next)
+        _tr = getattr(Qt, "TopRightCorner", None)
+        if _tr is None and hasattr(Qt, "Corner"):
+            _tr = Qt.Corner.TopRightCorner
+        if _tr is not None:
+            self._tabs_resultados_sheets.setCornerWidget(nav_wrap, _tr)
+        else:
+            self._tabs_resultados_sheets.setCornerWidget(nav_wrap)
         rl.addWidget(self._tabs_resultados_sheets, stretch=1)
 
         self._workspace_stack = QStackedWidget(central)
@@ -1631,6 +1672,16 @@ class FtoolMainWindow(_QMainWindow):
     def _show_resultados_tab(self) -> None:
         self._set_workspace_page(self._IDX_WORKSPACE_RESULTADOS)
 
+    def _shift_resultados_tab(self, step: int) -> None:
+        tabs = self._tabs_resultados_sheets
+        n = tabs.count()
+        if n <= 0:
+            return
+        i = tabs.currentIndex()
+        if i < 0:
+            i = 0
+        tabs.setCurrentIndex((i + int(step)) % n)
+
     def _refresh_resultados_tables_ui(self) -> None:
         """Rellena las pestañas tipo Excel desde el último análisis."""
         if self._qt_backend == "PySide6":
@@ -1691,18 +1742,19 @@ class FtoolMainWindow(_QMainWindow):
                 tbl.verticalHeader().setDefaultSectionSize(20)
                 tbl.horizontalHeader().setStretchLastSection(True)
                 tbl.horizontalHeader().setHighlightSections(False)
-                self._populate_resultados_qtable(tbl, df)
+                self._populate_resultados_qtable(tbl, df, key)
                 title = _RESULTADOS_TAB_TITLES.get(key, key.replace("_", " "))
                 tabs.addTab(tbl, title)
                 self._resultados_sheet_key_order.append(key)
         finally:
             tabs.blockSignals(False)
 
-    def _populate_resultados_qtable(self, tbl: Any, df: Any) -> None:
+    def _populate_resultados_qtable(self, tbl: Any, df: Any, sheet_key: str = "") -> None:
         import pandas as pd
 
         tbl.clear()
-        tbl.setRowCount(len(df))
+        extra_group_row = 0
+        tbl.setRowCount(len(df) + extra_group_row)
         tbl.setColumnCount(len(df.columns))
         tbl.setHorizontalHeaderLabels([str(c) for c in df.columns])
         TWI = self._QTableWidgetItem
@@ -1724,7 +1776,7 @@ class FtoolMainWindow(_QMainWindow):
                     txt = str(val)
                 it = TWI(txt)
                 it.setFlags(_ro)
-                tbl.setItem(r, c, it)
+                tbl.setItem(r + extra_group_row, c, it)
 
     def _export_resultados_dialog(self) -> None:
         dfs = self._cached_resultados_dfs
