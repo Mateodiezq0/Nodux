@@ -1165,6 +1165,9 @@ def _dibujo_vectores_fuerza_global(
                     extras.append(P.copy())
                     extras.append(tail.copy())
 
+    color_fuerza_nodal = "#c83232"
+    color_momento_nodal = "#7a3fbf"
+
     if cargas_nodales:
         for cn in cargas_nodales:
             nid = getattr(cn, "nodo_id", None)
@@ -1174,6 +1177,7 @@ def _dibujo_vectores_fuerza_global(
             if nodo is None:
                 continue
             P = np.array([float(nodo.x), float(nodo.y), float(nodo.z)], dtype=float)
+            # --- Fuerzas (fx, fy, fz) — flecha roja simple ---
             F = np.array(
                 [
                     float(getattr(cn, "fx", 0.0) or 0.0),
@@ -1189,17 +1193,51 @@ def _dibujo_vectores_fuerza_global(
                 u[i] = float(np.sign(F[i]))
                 tail = P - longitud_vector * u
                 ax.quiver(
-                    tail[0],
-                    tail[1],
-                    tail[2],
-                    u[0],
-                    u[1],
-                    u[2],
+                    tail[0], tail[1], tail[2],
+                    u[0], u[1], u[2],
                     length=longitud_vector,
                     normalize=True,
-                    color=color,
-                    linewidth=1.35,
-                    arrow_length_ratio=0.22,
+                    color=color_fuerza_nodal,
+                    linewidth=1.7,
+                    arrow_length_ratio=0.28,
+                )
+                extras.append(P.copy())
+                extras.append(tail.copy())
+            # --- Momentos (mx, my, mz) — flecha doble cabeza violeta ---
+            M = np.array(
+                [
+                    float(getattr(cn, "mx", 0.0) or 0.0),
+                    float(getattr(cn, "my", 0.0) or 0.0),
+                    float(getattr(cn, "mz", 0.0) or 0.0),
+                ],
+                dtype=float,
+            )
+            for i in range(3):
+                if abs(M[i]) <= tol:
+                    continue
+                u = np.zeros(3, dtype=float)
+                u[i] = float(np.sign(M[i]))
+                tail = P - longitud_vector * u
+                # Cabeza principal
+                ax.quiver(
+                    tail[0], tail[1], tail[2],
+                    u[0], u[1], u[2],
+                    length=longitud_vector,
+                    normalize=True,
+                    color=color_momento_nodal,
+                    linewidth=1.7,
+                    arrow_length_ratio=0.28,
+                )
+                # Segunda cabeza (a 0.18 del extremo) → doble cabeza convención vectores de par
+                tail2 = P - 0.82 * longitud_vector * u
+                ax.quiver(
+                    tail2[0], tail2[1], tail2[2],
+                    u[0], u[1], u[2],
+                    length=0.18 * longitud_vector,
+                    normalize=True,
+                    color=color_momento_nodal,
+                    linewidth=1.7,
+                    arrow_length_ratio=0.55,
                 )
                 extras.append(P.copy())
                 extras.append(tail.copy())
@@ -2727,8 +2765,24 @@ def dibujo_fuerzas(
                     facecolor="k",
                     edgecolor="k",
                     linewidth=0.35,
-                    label="Fuerza (global X/Y/Z, longitud fija)",
+                    label="Fuerza en barra (global X/Y/Z)",
                 )
+            )
+        if cargas_nodales and any(
+            any(abs(float(getattr(cn, a, 0) or 0)) > 1e-12 for a in ("fx", "fy", "fz"))
+            for cn in cargas_nodales
+        ):
+            handles.append(
+                Patch(facecolor="#c83232", edgecolor="#c83232", linewidth=0.35,
+                      label="Fuerza en nodo (F, roja)")
+            )
+        if cargas_nodales and any(
+            any(abs(float(getattr(cn, a, 0) or 0)) > 1e-12 for a in ("mx", "my", "mz"))
+            for cn in cargas_nodales
+        ):
+            handles.append(
+                Patch(facecolor="#7a3fbf", edgecolor="#7a3fbf", linewidth=0.35,
+                      label="Momento en nodo (M, doble cabeza violeta)")
             )
         try:
             ax.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.9)

@@ -593,6 +593,7 @@ def _default_spec() -> Dict[str, Any]:
         "bars": [],
         "loads_point": [],
         "loads_distributed": [],
+        "loads_nodal": [],
     }
 
 
@@ -605,7 +606,9 @@ _RESULTADOS_TAB_TITLES = {
     "F_locales_de_cargas": "F locales (cargas)",
     "R_locales_de_empotramiento_cargas": "R locales de empot. (reacciones)",
     "Cargas_nodales_locales": "Cargas nodales locales",
+    "Cargas_Nodales_Aplicadas": "Cargas nodales aplicadas (en nodo)",
     "Cargas_nodales_equivalentes_Globales": "Cargas nodales equivalentes Globales",
+    "Vector_Nodal_Equivalente": "Vector nodal equivalente F (global)",
     "Solicitacion_extremo_de_barra_Globales": "Solicitación extremo de barra Globales",
     "Solicitacion_extremo_de_barra_Locales": "Solicitación extremo de barra Locales",
     "Desplazamientos_globales_D": "Desplazamientos D Globales",
@@ -916,10 +919,11 @@ class FtoolMainWindow(_QMainWindow):
         self._top_toolbar.addWidget(self._btn_redo)
         self._top_toolbar.addSeparator()
 
-        self._btn_nodo  = _mk_tb("node",   "Agregar nodo",              self._dlg_add_node)
-        self._btn_barra = _mk_tb("bar",    "Agregar barra",             self._dlg_add_bar)
-        self._btn_carga = _mk_tb("load",   "Carga puntual en barra",    self._dlg_add_load)
-        self._btn_carga_dist = _mk_tb("load", "Carga distribuida en barra", self._dlg_add_distributed_load)
+        self._btn_nodo  = _mk_tb("node",       "Agregar nodo",                   self._dlg_add_node)
+        self._btn_barra = _mk_tb("bar",        "Agregar barra",                  self._dlg_add_bar)
+        self._btn_carga = _mk_tb("load",       "Carga puntual en barra",         self._dlg_add_load)
+        self._btn_carga_dist  = _mk_tb("load",       "Carga distribuida en barra",     self._dlg_add_distributed_load)
+        self._btn_carga_nodal = _mk_tb("load_nodal", "Carga nodal en nodo",            self._dlg_add_nodal_load)
         self._btn_del   = QToolButton()
         self._btn_del.setObjectName("btnIconDanger")
         self._btn_del.setIcon(_ico["delete"])
@@ -927,7 +931,7 @@ class FtoolMainWindow(_QMainWindow):
         self._btn_del.setToolButtonStyle(_tt_icon)
         self._btn_del.setToolTip("Eliminar fila seleccionada")
         self._btn_del.clicked.connect(self._on_delete_selection)
-        for _b in (self._btn_nodo, self._btn_barra, self._btn_carga, self._btn_carga_dist, self._btn_del):
+        for _b in (self._btn_nodo, self._btn_barra, self._btn_carga, self._btn_carga_dist, self._btn_carga_nodal, self._btn_del):
             self._top_toolbar.addWidget(_b)
         self._top_toolbar.addSeparator()
 
@@ -1657,7 +1661,7 @@ class FtoolMainWindow(_QMainWindow):
         spec = getattr(self, "_spec", {})
         nn = len(spec.get("nodes", []))
         nb = len(spec.get("bars", []))
-        nc = len(spec.get("loads_point", [])) + len(spec.get("loads_distributed", []))
+        nc = len(spec.get("loads_point", [])) + len(spec.get("loads_distributed", [])) + len(spec.get("loads_nodal", []))
         nm = len(spec.get("materials", {}))
         solved = getattr(self, "_solved", False)
         vista_key = ""
@@ -1975,10 +1979,11 @@ class FtoolMainWindow(_QMainWindow):
 
             loads_p = spec.get("loads_point") or []
             loads_d = spec.get("loads_distributed") or []
+            loads_n = spec.get("loads_nodal") or []
             self._tbl_loads.setRowCount(0)
             self._tbl_loads.setColumnCount(5)
             self._tbl_loads.setHorizontalHeaderLabels(
-                ["Nº", "Tipo", "Barra", "Posición / Rango", "Fuerza / Intensidad"]
+                ["Nº", "Tipo", "Barra/Nodo", "Posición / Rango", "Fuerza / Intensidad"]
             )
             for _hci, _tip in (
                 (3, "Punto (x,y,z) o rango inicio→fin (editar en ventana emergente)"),
@@ -2017,6 +2022,20 @@ class FtoolMainWindow(_QMainWindow):
                     it = TWI(txt)
                     it.setFlags(_ro)
                     it.setData(ur, ("dist_load", i))
+                    self._tbl_loads.setItem(r, col, it)
+            for i, c in enumerate(loads_n):
+                r = self._tbl_loads.rowCount()
+                self._tbl_loads.insertRow(r)
+                nid_val = c.get("node_id") or c.get("nodo_id", "?")
+                fx = float(c.get("Fx", 0)); fy = float(c.get("Fy", 0)); fz = float(c.get("Fz", 0))
+                mx = float(c.get("Mx", 0)); my = float(c.get("My", 0)); mz = float(c.get("Mz", 0))
+                fstr_n = f"F({fx:g},{fy:g},{fz:g}) M({mx:g},{my:g},{mz:g})"
+                _row_n += 1
+                vals = [str(_row_n), "Nodal", f"nodo {nid_val}", "—", fstr_n]
+                for col, txt in enumerate(vals):
+                    it = TWI(txt)
+                    it.setFlags(_ro)
+                    it.setData(ur, ("nodal_load", i))
                     self._tbl_loads.setItem(r, col, it)
 
             for tbl, pr in (
@@ -3257,6 +3276,7 @@ class FtoolMainWindow(_QMainWindow):
             self._spec.setdefault("bars", [])
             self._spec.setdefault("loads_point", [])
             self._spec.setdefault("loads_distributed", [])
+            self._spec.setdefault("loads_nodal", [])
         except Exception as e:
             self._QMessageBox.critical(self, "Error", str(e))
             return
@@ -3674,6 +3694,107 @@ class FtoolMainWindow(_QMainWindow):
         self._refresh_tree()
         self._redraw()
 
+    def _dlg_add_nodal_load(self) -> None:
+        nids = [n["id"] for n in self._spec["nodes"]]
+        if not nids:
+            self._QMessageBox.warning(self, "Carga nodal", "Agregá al menos un nodo.")
+            return
+        d = self._QDialog(self)
+        d.setWindowTitle("Carga nodal (fuerzas y momentos en nodo)")
+        form = self._QFormLayout(d)
+        cb_nodo = self._QComboBox()
+        for nid in nids:
+            cb_nodo.addItem(str(nid), nid)
+
+        def _make_sb(lo=-1e9, hi=1e9, val=0.0):
+            sb = self._QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setValue(val)
+            return sb
+
+        sfx = _make_sb(); sfy = _make_sb(); sfz = _make_sb()
+        smx = _make_sb(); smy = _make_sb(); smz = _make_sb()
+
+        form.addRow("Nodo", cb_nodo)
+        form.addRow(self._QLabel("— Fuerzas globales (kN) —"))
+        form.addRow("Fx", sfx); form.addRow("Fy", sfy); form.addRow("Fz", sfz)
+        form.addRow(self._QLabel("— Momentos globales (kN·cm) —"))
+        form.addRow("Mx", smx); form.addRow("My", smy); form.addRow("Mz", smz)
+
+        DBB = self._QDialogButtonBox
+        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
+        form.addRow(bb)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        if self._dialog_accepted(d) is False:
+            return
+        self._push_undo_snapshot()
+        self._spec.setdefault("loads_nodal", []).append(
+            {
+                "id": len(self._spec.get("loads_nodal") or []) + 1,
+                "node_id": cb_nodo.currentData(),
+                "Fx": sfx.value(), "Fy": sfy.value(), "Fz": sfz.value(),
+                "Mx": smx.value(), "My": smy.value(), "Mz": smz.value(),
+            }
+        )
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
+    def _dlg_edit_nodal_load(self, index: int) -> None:
+        loads = self._spec.setdefault("loads_nodal", [])
+        if index < 0 or index >= len(loads):
+            return
+        c = loads[index]
+        nids = [n["id"] for n in self._spec["nodes"]]
+        if not nids:
+            self._QMessageBox.warning(self, "Carga nodal", "Agregá al menos un nodo.")
+            return
+        d = self._QDialog(self)
+        d.setWindowTitle(f"Editar carga nodal ({index + 1})")
+        form = self._QFormLayout(d)
+        cb_nodo = self._QComboBox()
+        for nid in nids:
+            cb_nodo.addItem(str(nid), nid)
+        cur_n = int(c.get("node_id", nids[0]))
+        ix = cb_nodo.findData(cur_n)
+        if ix >= 0:
+            cb_nodo.setCurrentIndex(ix)
+
+        def _make_sb(lo=-1e9, hi=1e9, val=0.0):
+            sb = self._QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setValue(val)
+            return sb
+
+        sfx = _make_sb(val=float(c.get("Fx", 0)))
+        sfy = _make_sb(val=float(c.get("Fy", 0)))
+        sfz = _make_sb(val=float(c.get("Fz", 0)))
+        smx = _make_sb(val=float(c.get("Mx", 0)))
+        smy = _make_sb(val=float(c.get("My", 0)))
+        smz = _make_sb(val=float(c.get("Mz", 0)))
+
+        form.addRow("Nodo", cb_nodo)
+        form.addRow(self._QLabel("— Fuerzas globales (kN) —"))
+        form.addRow("Fx", sfx); form.addRow("Fy", sfy); form.addRow("Fz", sfz)
+        form.addRow(self._QLabel("— Momentos globales (kN·cm) —"))
+        form.addRow("Mx", smx); form.addRow("My", smy); form.addRow("Mz", smz)
+
+        DBB = self._QDialogButtonBox
+        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
+        form.addRow(bb)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        if self._dialog_accepted(d) is False:
+            return
+        self._push_undo_snapshot()
+        c["node_id"] = int(cb_nodo.currentData())
+        c["Fx"] = sfx.value(); c["Fy"] = sfy.value(); c["Fz"] = sfz.value()
+        c["Mx"] = smx.value(); c["My"] = smy.value(); c["Mz"] = smz.value()
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
     def _open_inspector_edit(self, table: Any, row: int) -> None:
         if table is self._tbl_nodes:
             it = self._tbl_nodes.item(row, 0)
@@ -3695,6 +3816,8 @@ class FtoolMainWindow(_QMainWindow):
                 role_data = it.data(self._user_role)
                 if role_data and role_data[0] == "dist_load":
                     self._dlg_edit_distributed_load(role_data[1])
+                elif role_data and role_data[0] == "nodal_load":
+                    self._dlg_edit_nodal_load(role_data[1])
                 else:
                     self._dlg_edit_load(row)
 
@@ -3726,6 +3849,8 @@ class FtoolMainWindow(_QMainWindow):
             self._delete_load(int(ident))
         elif kind == "dist_load":
             self._delete_dist_load(int(ident))
+        elif kind == "nodal_load":
+            self._delete_nodal_load(int(ident))
         elif kind == "material":
             self._delete_material_key(str(ident))
 
@@ -3776,6 +3901,9 @@ class FtoolMainWindow(_QMainWindow):
         self._spec["loads_distributed"] = [
             c for c in self._spec.get("loads_distributed") or [] if c.get("bar_id") not in bars_drop
         ]
+        self._spec["loads_nodal"] = [
+            c for c in self._spec.get("loads_nodal") or [] if int(c.get("node_id", -1)) != nid
+        ]
         self._spec["bars"] = [b for b in self._spec["bars"] if b["id"] not in bars_drop]
         self._spec["nodes"] = [n for n in self._spec["nodes"] if n["id"] != nid]
         self._invalidate_solution()
@@ -3806,6 +3934,15 @@ class FtoolMainWindow(_QMainWindow):
 
     def _delete_dist_load(self, index: int) -> None:
         loads = self._spec.setdefault("loads_distributed", [])
+        if 0 <= index < len(loads):
+            self._push_undo_snapshot()
+            loads.pop(index)
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
+    def _delete_nodal_load(self, index: int) -> None:
+        loads = self._spec.setdefault("loads_nodal", [])
         if 0 <= index < len(loads):
             self._push_undo_snapshot()
             loads.pop(index)

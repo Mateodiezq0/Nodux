@@ -19,9 +19,11 @@ RESULTADOS_SHEET_ORDER: List[str] = [
     "F_locales_de_cargas",
     "R_locales_de_empotramiento_cargas",
     "Cargas_nodales_locales",
+    "Cargas_Nodales_Aplicadas",
     "Matriz_R_2D",
     "Matriz_Rotacion_T",
     "Cargas_nodales_equivalentes_Globales",
+    "Vector_Nodal_Equivalente",
     "Sistema_reducido_Kll_Fl",
     "Desplazamientos_globales_D",
     "Solicitacion_extremo_de_barra_Globales",
@@ -126,6 +128,26 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
                 **{nombres_dofs[i]: float(cargas_12[i]) for i in range(12)},
             }
         )
+    # Cargas nodales aplicadas directamente — aportan al ensamble del vector
+    # nodal equivalente como filas adicionales (lado i = nodo aplicado, lado f = 0).
+    # Con esto, al sumar por nodo todas las filas de la tabla se reproduce el
+    # ``vector_nodal_equivalente`` global.
+    for cn in getattr(estructura, "cargas_nodales", []) or []:
+        nid = int(getattr(cn, "nodo_id", 0) or 0)
+        fila = {
+            "Barra ID": f"Nodal#{getattr(cn, 'id', '?')}",
+            "Nodo Inicial": nid,
+            "Nodo Final": "—",
+            "Fx_i": float(getattr(cn, "fx", 0.0) or 0.0),
+            "Fy_i": float(getattr(cn, "fy", 0.0) or 0.0),
+            "Fz_i": float(getattr(cn, "fz", 0.0) or 0.0),
+            "Mx_i": float(getattr(cn, "mx", 0.0) or 0.0),
+            "My_i": float(getattr(cn, "my", 0.0) or 0.0),
+            "Mz_i": float(getattr(cn, "mz", 0.0) or 0.0),
+            "Fx_f": 0.0, "Fy_f": 0.0, "Fz_f": 0.0,
+            "Mx_f": 0.0, "My_f": 0.0, "Mz_f": 0.0,
+        }
+        datos_cargas_globales_nudos.append(fila)
     df_cargas_globales_nudos = pd.DataFrame(datos_cargas_globales_nudos)
 
     datos_reacciones_estructura = []
@@ -254,17 +276,56 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
             )
     df_cargas_nodales_locales = pd.DataFrame(datos_cargas_nodales_locales)
 
+    datos_cargas_nodales_aplicadas = []
+    for cn in getattr(estructura, "cargas_nodales", []) or []:
+        datos_cargas_nodales_aplicadas.append(
+            {
+                "Carga ID": getattr(cn, "id", None),
+                "Nodo ID": int(getattr(cn, "nodo_id", 0) or 0),
+                "Fx": float(getattr(cn, "fx", 0.0) or 0.0),
+                "Fy": float(getattr(cn, "fy", 0.0) or 0.0),
+                "Fz": float(getattr(cn, "fz", 0.0) or 0.0),
+                "Mx": float(getattr(cn, "mx", 0.0) or 0.0),
+                "My": float(getattr(cn, "my", 0.0) or 0.0),
+                "Mz": float(getattr(cn, "mz", 0.0) or 0.0),
+            }
+        )
+    df_cargas_nodales_aplicadas = pd.DataFrame(datos_cargas_nodales_aplicadas)
+
     nombres_dofs_nodo = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
-    datos_vector_nodal = []
     vector_nodal = getattr(estructura, "vector_nodal_equivalente", None)
+    n_nodos_total = len(getattr(estructura, "nodos", []))
     if vector_nodal is None:
-        vector_nodal = np.zeros(len(getattr(estructura, "nodos", [])) * 6)
+        vector_nodal = np.zeros(n_nodos_total * 6)
+
+    # Aporte solo de cargas nodales aplicadas directamente
+    aporte_nodales = np.zeros(n_nodos_total * 6, dtype=float)
+    for cn in getattr(estructura, "cargas_nodales", []) or []:
+        nid = int(getattr(cn, "nodo_id", 0) or 0)
+        if nid <= 0 or nid > n_nodos_total:
+            continue
+        base_cn = (nid - 1) * 6
+        aporte_nodales[base_cn:base_cn + 6] += np.asarray(cn.vector(), dtype=float)
+
+    datos_vector_nodal = []
     for nodo in getattr(estructura, "nodos", []):
         base = (nodo.id - 1) * 6
-        fila = {"Nodo ID": nodo.id}
+        fila = {"Nodo ID": nodo.id, "Origen": "Total"}
         for i, nombre in enumerate(nombres_dofs_nodo):
             fila[nombre] = float(vector_nodal[base + i]) if base + i < len(vector_nodal) else 0.0
         datos_vector_nodal.append(fila)
+
+        fila_n = {"Nodo ID": nodo.id, "Origen": "  ↳ aporte cargas nodales"}
+        for i, nombre in enumerate(nombres_dofs_nodo):
+            fila_n[nombre] = float(aporte_nodales[base + i])
+        datos_vector_nodal.append(fila_n)
+
+        fila_b = {"Nodo ID": nodo.id, "Origen": "  ↳ aporte cargas en barras (equiv.)"}
+        for i, nombre in enumerate(nombres_dofs_nodo):
+            total_i = float(vector_nodal[base + i]) if base + i < len(vector_nodal) else 0.0
+            fila_b[nombre] = total_i - float(aporte_nodales[base + i])
+        datos_vector_nodal.append(fila_b)
+
     df_vector_nodal = pd.DataFrame(datos_vector_nodal)
 
     nombres_desp = ["Ux", "Uy", "Uz", "Rx", "Ry", "Rz"]
@@ -425,14 +486,15 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
         "F_locales_de_cargas": df_f_locales_cargas,
         "R_locales_de_empotramiento_cargas": df_r_locales_emp_cargas,
         "Cargas_nodales_locales": df_cargas_nodales_locales,
+        "Cargas_Nodales_Aplicadas": df_cargas_nodales_aplicadas,
         "Cargas_nodales_equivalentes_Globales": df_cargas_globales_nudos.copy(),
+        "Vector_Nodal_Equivalente": df_vector_nodal,
         "Solicitacion_extremo_de_barra_Globales": df_reacciones_estructura_global.copy(),
         "reacciones_de_estructura_Globales": df_reacciones_estructura_global,
         "Solicitacion_extremo_de_barra_Locales": df_f_interna_locales,
         "Desplazamientos_globales_D": df_desplazamientos,
         "Sistema_reducido_Kll_Fl": df_sistema_reducido,
         "reacciones_locales_de_empotramiento": df_reacciones_locales_nodos,
-        "Vector_Nodal_Equivalente": df_vector_nodal,
         "Matriz_Rotacion_T": df_matriz_T,
     }
 

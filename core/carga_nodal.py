@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field
 import numpy as np
-from typing import List
+
 
 class CargaNodal:
     nodo_id: int

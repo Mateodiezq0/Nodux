@@ -268,12 +268,32 @@ def ftool_engineering_icons() -> Dict[str, object]:
         cell_w = max(2, sz - cx2 - 5)
         p.drawRect(cx2 + 1, y1 + 1, cell_w, 2)
 
+    def paint_load_nodal(p: QPainter, sz: int) -> None:
+        # Flecha roja (carga nodal en nodo) con un círculo en la cola
+        p.setPen(QPen(QColor("#c83232"), 1.5))
+        p.setBrush(QBrush(QColor("#e04444")))
+        arr = QPolygonF(
+            [
+                QPointF(6, sz * 0.55),
+                QPointF(sz - 5, sz * 0.55),
+                QPointF(sz - 9, sz * 0.42),
+                QPointF(sz - 9, sz * 0.68),
+                QPointF(sz - 5, sz * 0.55),
+            ]
+        )
+        p.drawPolygon(arr)
+        # Círculo en la cola para indicar "aplicada directamente en el nodo"
+        p.setBrush(QBrush(QColor("#c83232")))
+        r = max(2, int(sz * 0.15))
+        p.drawEllipse(int(3 - r // 2), int(sz * 0.55 - r), r * 2, r * 2)
+
     _cache.clear()
     _cache.update(
         {
             "node": _icon_from_paint(s, paint_node),
             "bar": _icon_from_paint(s, paint_bar),
             "load": _icon_from_paint(s, paint_load),
+            "load_nodal": _icon_from_paint(s, paint_load_nodal),
             "run": _icon_from_paint(s, paint_run),
             "delete": _icon_from_paint(s, paint_delete),
             "new": _icon_from_paint(s, paint_new),

@@ -30,6 +30,7 @@ def _default_spec() -> Dict[str, Any]:
         "nodes": [],
         "bars": [],
         "loads_point": [],
+        "loads_nodal": [],
     }
 
 
@@ -56,6 +57,12 @@ def _print_spec(spec: Dict[str, Any]) -> None:
     print("Cargas puntuales:", len(spec.get("loads_point") or []))
     for c in spec.get("loads_point") or []:
         print(f"  barra {c.get('bar_id')} en ({c['x']}, {c['y']}, {c['z']})")
+    print("Cargas nodales:", len(spec.get("loads_nodal") or []))
+    for c in spec.get("loads_nodal") or []:
+        nid = c.get("node_id") or c.get("nodo_id")
+        fx, fy, fz = c.get("Fx", 0), c.get("Fy", 0), c.get("Fz", 0)
+        mx, my, mz = c.get("Mx", 0), c.get("My", 0), c.get("Mz", 0)
+        print(f"  nodo {nid} | F=({fx},{fy},{fz}) M=({mx},{my},{mz})")
     print("----------------------\n")
 
 
@@ -66,7 +73,7 @@ def run_interactive_menu() -> None:
     spec = _default_spec()
     print(
         "Cliente interactivo — mismos pasos que supertesteo (ensamble, cargas, resolver, diagramas).\n"
-        "Comandos: 1 nodo | 2 barra | 3 carga | 4 listar | 5 guardar json | 6 cargar json | 7 resolver y graficar | 0 salir\n"
+        "Comandos: 1 nodo | 2 barra | 3 carga puntual | 3n carga nodal | 4 listar | 5 guardar json | 6 cargar json | 7 resolver y graficar | 0 salir\n"
     )
 
     while True:
@@ -127,6 +134,28 @@ def run_interactive_menu() -> None:
             else:
                 print("Usá exactamente 3 números separados por coma.")
             print("Carga añadida (se recalcula al resolver).")
+        elif op == "3n":
+            nid = int(_prompt("ID nodo donde aplicar la carga", "1"))
+            print("Fuerzas y momentos en ejes globales [Fx, Fy, Fz, Mx, My, Mz] (kN / kN·cm).")
+            line = _prompt("Lista separada por coma (6 valores)", "0,0,0,0,0,0")
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) != 6:
+                print("Necesito exactamente 6 valores.")
+                continue
+            try:
+                fx, fy, fz, mx, my, mz = (float(p) for p in parts)
+            except ValueError:
+                print("Todos los valores deben ser números.")
+                continue
+            spec.setdefault("loads_nodal", []).append(
+                {
+                    "id": len(spec.get("loads_nodal") or []) + 1,
+                    "node_id": nid,
+                    "Fx": fx, "Fy": fy, "Fz": fz,
+                    "Mx": mx, "My": my, "Mz": mz,
+                }
+            )
+            print("Carga nodal añadida (se aplica al resolver).")
         elif op == "4":
             _print_spec(spec)
         elif op == "5":
@@ -144,6 +173,7 @@ def run_interactive_menu() -> None:
             spec.setdefault("nodes", [])
             spec.setdefault("bars", [])
             spec.setdefault("loads_point", [])
+            spec.setdefault("loads_nodal", [])
             print("Modelo cargado.")
         elif op == "7":
             if not spec["nodes"] or not spec["bars"]:

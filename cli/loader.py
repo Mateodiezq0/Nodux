@@ -12,6 +12,7 @@ import numpy as np
 
 from core.barra import Barra
 from core.carga_distribuida import CargaDistribuida
+from core.carga_nodal import CargaNodal
 from core.carga_puntual import CargaPuntual, reacciones_de_empotramiento
 from core.estructura import Estructura
 from core.nodos import Nodo
@@ -126,6 +127,10 @@ def build_estructura_from_spec(spec: Dict[str, Any]) -> Estructura:
           - { id, i, j, material?: str, tita?: float }
         loads_point:
           - { bar_id, x, y, z, Fx?, Fy?, Fz? }   # o force_global: [fx,fy,fz]
+        loads_distributed:
+          - { bar_id, x, y, z, x_f, y_f, z_f, force_global: [qx,qy,qz] }
+        loads_nodal:
+          - { node_id, Fx?, Fy?, Fz?, Mx?, My?, Mz? }
     """
     est = Estructura()
     nodes_spec = spec.get("nodes") or spec.get("nodos")
@@ -240,6 +245,25 @@ def build_estructura_from_spec(spec: Dict[str, Any]) -> Estructura:
             force_global_intensity=net,
         )
         bar.cargas.append(carga)
+
+    nodal_loads = spec.get("loads_nodal") or spec.get("cargas_nodales_aplicadas") or []
+    for k, raw in enumerate(nodal_loads):
+        nid_raw = raw.get("node_id") or raw.get("nodo_id")
+        if nid_raw is None:
+            raise ValueError(f"Carga nodal {k}: falta 'node_id'")
+        nid = int(nid_raw)
+        if nid not in nodos_dict:
+            raise ValueError(f"Carga nodal {k}: node_id {nid} no existe en los nodos definidos")
+        cn = CargaNodal(
+            nodo_id=nid,
+            fx=float(raw.get("Fx", raw.get("fx", 0.0))),
+            fy=float(raw.get("Fy", raw.get("fy", 0.0))),
+            fz=float(raw.get("Fz", raw.get("fz", 0.0))),
+            mx=float(raw.get("Mx", raw.get("mx", 0.0))),
+            my=float(raw.get("My", raw.get("my", 0.0))),
+            mz=float(raw.get("Mz", raw.get("mz", 0.0))),
+        )
+        est.agregar_carga_nodal(cn)
 
     for barra in est.barras:
         for carga in barra.cargas:

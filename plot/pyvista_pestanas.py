@@ -679,6 +679,9 @@ def _add_fuerzas_globales(
                     if ln.n_points > 0:
                         plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
 
+    color_fuerza_nodal = "#c83232"
+    color_momento_nodal = "#7a3fbf"
+
     if cargas_nodales:
         for cn in cargas_nodales:
             nid = getattr(cn, "nodo_id", None)
@@ -688,6 +691,7 @@ def _add_fuerzas_globales(
             if nodo is None:
                 continue
             P = np.array([float(nodo.x), float(nodo.y), float(nodo.z)], dtype=float)
+            # --- Fuerzas (fx, fy, fz) — tubo rojo más grueso ---
             F = np.array(
                 [
                     float(getattr(cn, "fx", 0.0) or 0.0),
@@ -704,7 +708,43 @@ def _add_fuerzas_globales(
                 tail = P - longitud_vector * u
                 ln = pv.Line(tail, P)
                 if ln.n_points > 0:
-                    plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
+                    plotter.add_mesh(ln.tube(radius=tube_r * 1.15), color=color_fuerza_nodal, smooth_shading=True)
+            # --- Momentos (mx, my, mz) — doble cuerpo + conos violetas ---
+            Mv = np.array(
+                [
+                    float(getattr(cn, "mx", 0.0) or 0.0),
+                    float(getattr(cn, "my", 0.0) or 0.0),
+                    float(getattr(cn, "mz", 0.0) or 0.0),
+                ],
+                dtype=float,
+            )
+            for i in range(3):
+                if abs(Mv[i]) <= tol:
+                    continue
+                u = np.zeros(3, dtype=float)
+                u[i] = float(np.sign(Mv[i]))
+                tail = P - longitud_vector * u
+                # Cuerpo principal
+                ln = pv.Line(tail, P)
+                if ln.n_points > 0:
+                    plotter.add_mesh(ln.tube(radius=tube_r), color=color_momento_nodal, smooth_shading=True)
+                # Segunda cabeza (doble flecha a 0.18·L del extremo)
+                tail2 = P - 0.82 * longitud_vector * u
+                tip2 = P - (0.82 - 0.18) * longitud_vector * u
+                ln2 = pv.Line(tail2, tip2)
+                if ln2.n_points > 0:
+                    plotter.add_mesh(ln2.tube(radius=tube_r), color=color_momento_nodal, smooth_shading=True)
+                # Cono en la punta principal
+                cone_h = tube_r * 5.0
+                cone_center = P - u * cone_h * 0.5
+                cone = pv.Cone(center=cone_center.tolist(), direction=u.tolist(), height=cone_h, radius=tube_r * 2.5)
+                if cone.n_points > 0:
+                    plotter.add_mesh(cone, color=color_momento_nodal, smooth_shading=True)
+                # Cono en la segunda cabeza
+                cone2_center = tip2 - u * cone_h * 0.5
+                cone2 = pv.Cone(center=cone2_center.tolist(), direction=u.tolist(), height=cone_h, radius=tube_r * 2.5)
+                if cone2.n_points > 0:
+                    plotter.add_mesh(cone2, color=color_momento_nodal, smooth_shading=True)
 
 
 def _tube_radius_from_ipn(ipn: pv.PolyData) -> Tuple[float, float]:
@@ -1709,6 +1749,10 @@ def export_paraview_todo(
                 t = pv.Line(tail, P).tube(radius=r_f)
                 if t.n_points:
                     fuerzas.append(t)
+    _color_f_nodal = "#c83232"
+    _color_m_nodal = "#7a3fbf"
+    fuerzas_nodales_f: List[pv.PolyData] = []
+    fuerzas_nodales_m: List[pv.PolyData] = []
     if cargas_nodales:
         for cn in cargas_nodales:
             nid = getattr(cn, "nodo_id", None)
@@ -1718,18 +1762,45 @@ def export_paraview_todo(
             if nodo is None:
                 continue
             P = np.array([float(nodo.x), float(nodo.y), float(nodo.z)])
-            F = np.array(
+            # Fuerzas
+            Fv = np.array(
                 [float(getattr(cn, "fx", 0.0) or 0.0), float(getattr(cn, "fy", 0.0) or 0.0), float(getattr(cn, "fz", 0.0) or 0.0)]
             )
             for i in range(3):
-                if abs(F[i]) <= 1e-9:
+                if abs(Fv[i]) <= 1e-9:
                     continue
                 u = np.zeros(3)
-                u[i] = np.sign(F[i])
+                u[i] = np.sign(Fv[i])
+                tail = P - longitud_vector * u
+                t = pv.Line(tail, P).tube(radius=r_f * 1.15)
+                if t.n_points:
+                    fuerzas_nodales_f.append(t)
+            # Momentos
+            Mv = np.array(
+                [float(getattr(cn, "mx", 0.0) or 0.0), float(getattr(cn, "my", 0.0) or 0.0), float(getattr(cn, "mz", 0.0) or 0.0)]
+            )
+            for i in range(3):
+                if abs(Mv[i]) <= 1e-9:
+                    continue
+                u = np.zeros(3)
+                u[i] = np.sign(Mv[i])
                 tail = P - longitud_vector * u
                 t = pv.Line(tail, P).tube(radius=r_f)
                 if t.n_points:
-                    fuerzas.append(t)
+                    fuerzas_nodales_m.append(t)
+                tail2 = P - 0.82 * longitud_vector * u
+                tip2 = P - (0.82 - 0.18) * longitud_vector * u
+                t2 = pv.Line(tail2, tip2).tube(radius=r_f)
+                if t2.n_points:
+                    fuerzas_nodales_m.append(t2)
+    if fuerzas_nodales_f:
+        root["08b_fuerzas_nodales"] = fuerzas_nodales_f[0].merge(fuerzas_nodales_f[1:]) if len(fuerzas_nodales_f) > 1 else fuerzas_nodales_f[0]
+    else:
+        root["08b_fuerzas_nodales"] = pv.PolyData()
+    if fuerzas_nodales_m:
+        root["08c_momentos_nodales"] = fuerzas_nodales_m[0].merge(fuerzas_nodales_m[1:]) if len(fuerzas_nodales_m) > 1 else fuerzas_nodales_m[0]
+    else:
+        root["08c_momentos_nodales"] = pv.PolyData()
     if fuerzas:
         root["08_fuerzas"] = fuerzas[0].merge(fuerzas[1:]) if len(fuerzas) > 1 else fuerzas[0]
     else:
