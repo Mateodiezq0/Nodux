@@ -592,6 +592,7 @@ def _default_spec() -> Dict[str, Any]:
         "nodes": [],
         "bars": [],
         "loads_point": [],
+        "loads_distributed": [],
     }
 
 
@@ -918,6 +919,7 @@ class FtoolMainWindow(_QMainWindow):
         self._btn_nodo  = _mk_tb("node",   "Agregar nodo",              self._dlg_add_node)
         self._btn_barra = _mk_tb("bar",    "Agregar barra",             self._dlg_add_bar)
         self._btn_carga = _mk_tb("load",   "Carga puntual en barra",    self._dlg_add_load)
+        self._btn_carga_dist = _mk_tb("load", "Carga distribuida en barra", self._dlg_add_distributed_load)
         self._btn_del   = QToolButton()
         self._btn_del.setObjectName("btnIconDanger")
         self._btn_del.setIcon(_ico["delete"])
@@ -925,7 +927,7 @@ class FtoolMainWindow(_QMainWindow):
         self._btn_del.setToolButtonStyle(_tt_icon)
         self._btn_del.setToolTip("Eliminar fila seleccionada")
         self._btn_del.clicked.connect(self._on_delete_selection)
-        for _b in (self._btn_nodo, self._btn_barra, self._btn_carga, self._btn_del):
+        for _b in (self._btn_nodo, self._btn_barra, self._btn_carga, self._btn_carga_dist, self._btn_del):
             self._top_toolbar.addWidget(_b)
         self._top_toolbar.addSeparator()
 
@@ -1655,7 +1657,7 @@ class FtoolMainWindow(_QMainWindow):
         spec = getattr(self, "_spec", {})
         nn = len(spec.get("nodes", []))
         nb = len(spec.get("bars", []))
-        nc = len(spec.get("loads_point", []))
+        nc = len(spec.get("loads_point", [])) + len(spec.get("loads_distributed", []))
         nm = len(spec.get("materials", {}))
         solved = getattr(self, "_solved", False)
         vista_key = ""
@@ -1971,35 +1973,50 @@ class FtoolMainWindow(_QMainWindow):
                     it.setData(ur, ("bar", bid))
                     self._tbl_bars.setItem(r, c, it)
 
-            loads = spec.get("loads_point") or []
+            loads_p = spec.get("loads_point") or []
+            loads_d = spec.get("loads_distributed") or []
             self._tbl_loads.setRowCount(0)
-            self._tbl_loads.setColumnCount(4)
+            self._tbl_loads.setColumnCount(5)
             self._tbl_loads.setHorizontalHeaderLabels(
-                ["Nº", "Barra", "Coord. (x,y,z)", "Fuerza (Fx,Fy,Fz)"]
+                ["Nº", "Tipo", "Barra", "Posición / Rango", "Fuerza / Intensidad"]
             )
             for _hci, _tip in (
-                (2, "Tres numeros: ej. 10, 20, 30 (editar en ventana emergente)"),
-                (3, "Fx, Fy, Fz (editar en ventana emergente)"),
+                (3, "Punto (x,y,z) o rango inicio→fin (editar en ventana emergente)"),
+                (4, "Fuerza puntual o intensidad por unidad de longitud (editar)"),
             ):
                 _hh = self._tbl_loads.horizontalHeaderItem(_hci)
                 if _hh is not None:
                     _hh.setToolTip(_tip)
-            for i, c in enumerate(loads):
+            _row_n = 0
+            for i, c in enumerate(loads_p):
                 r = self._tbl_loads.rowCount()
                 self._tbl_loads.insertRow(r)
-                fg = c.get("force_global") or [
-                    c.get("Fx", 0),
-                    c.get("Fy", 0),
-                    c.get("Fz", 0),
-                ]
-                fx, fy, fz = (float(fg[0]), float(fg[1]), float(fg[2]))
+                fg = c.get("force_global") or [c.get("Fx", 0), c.get("Fy", 0), c.get("Fz", 0)]
+                fx, fy, fz = float(fg[0]), float(fg[1]), float(fg[2])
                 coord = f"({c['x']},{c['y']},{c['z']})"
                 fstr = f"({fx:g},{fy:g},{fz:g})"
-                vals = [str(i + 1), str(c.get("bar_id")), coord, fstr]
+                _row_n += 1
+                vals = [str(_row_n), "Puntual", str(c.get("bar_id")), coord, fstr]
                 for col, txt in enumerate(vals):
                     it = TWI(txt)
                     it.setFlags(_ro)
                     it.setData(ur, ("load", i))
+                    self._tbl_loads.setItem(r, col, it)
+            for i, c in enumerate(loads_d):
+                r = self._tbl_loads.rowCount()
+                self._tbl_loads.insertRow(r)
+                fg = c.get("force_global") or [c.get("qx", 0), c.get("qy", 0), c.get("qz", 0)]
+                qx, qy, qz = float(fg[0]), float(fg[1]), float(fg[2])
+                xi = c.get("x", "?"); yi = c.get("y", "?"); zi = c.get("z", "?")
+                xf = c.get("x_f", "?"); yf = c.get("y_f", "?"); zf = c.get("z_f", "?")
+                rango = f"({xi},{yi},{zi})→({xf},{yf},{zf})"
+                qstr = f"({qx:g},{qy:g},{qz:g})/u"
+                _row_n += 1
+                vals = [str(_row_n), "Distrib.", str(c.get("bar_id")), rango, qstr]
+                for col, txt in enumerate(vals):
+                    it = TWI(txt)
+                    it.setFlags(_ro)
+                    it.setData(ur, ("dist_load", i))
                     self._tbl_loads.setItem(r, col, it)
 
             for tbl, pr in (
@@ -2829,6 +2846,12 @@ class FtoolMainWindow(_QMainWindow):
         if item is None:
             return
         row = item.row()
+        it0 = self._tbl_loads.item(row, 0)
+        if it0 is not None:
+            role_data = it0.data(self._user_role)
+            if role_data and role_data[0] == "dist_load":
+                self._dlg_edit_distributed_load(role_data[1])
+                return
         self._dlg_edit_load(row)
 
     def _export_viewport_png(self) -> None:
@@ -3233,6 +3256,7 @@ class FtoolMainWindow(_QMainWindow):
             self._spec.setdefault("nodes", [])
             self._spec.setdefault("bars", [])
             self._spec.setdefault("loads_point", [])
+            self._spec.setdefault("loads_distributed", [])
         except Exception as e:
             self._QMessageBox.critical(self, "Error", str(e))
             return
@@ -3538,6 +3562,118 @@ class FtoolMainWindow(_QMainWindow):
         self._refresh_tree()
         self._redraw()
 
+    def _dlg_add_distributed_load(self) -> None:
+        bids = [b["id"] for b in self._spec["bars"]]
+        if not bids:
+            self._QMessageBox.warning(self, "Carga distribuida", "Agregá al menos una barra.")
+            return
+        d = self._QDialog(self)
+        d.setWindowTitle("Carga distribuida uniforme global")
+        form = self._QFormLayout(d)
+        cb_bar = self._QComboBox()
+        for bid in bids:
+            cb_bar.addItem(str(bid), bid)
+
+        def _make_sb(lo=-1e6, hi=1e6, val=0.0):
+            sb = self._QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setValue(val)
+            return sb
+
+        sxi = _make_sb(); syi = _make_sb(); szi = _make_sb()
+        sxf = _make_sb(); syf = _make_sb(); szf = _make_sb()
+        sqx = _make_sb(-1e9, 1e9); sqy = _make_sb(-1e9, 1e9); sqz = _make_sb(-1e9, 1e9)
+
+        form.addRow("Barra", cb_bar)
+        form.addRow(self._QLabel("— Inicio del tramo cargado (global) —"))
+        form.addRow("xi (cm)", sxi); form.addRow("yi (cm)", syi); form.addRow("zi (cm)", szi)
+        form.addRow(self._QLabel("— Fin del tramo cargado (global) —"))
+        form.addRow("xf (cm)", sxf); form.addRow("yf (cm)", syf); form.addRow("zf (cm)", szf)
+        form.addRow(self._QLabel("— Intensidad por unidad de longitud (global) —"))
+        form.addRow("qx (kN/cm)", sqx); form.addRow("qy (kN/cm)", sqy); form.addRow("qz (kN/cm)", sqz)
+
+        DBB = self._QDialogButtonBox
+        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
+        form.addRow(bb)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        if self._dialog_accepted(d) is False:
+            return
+        self._push_undo_snapshot()
+        self._spec.setdefault("loads_distributed", []).append(
+            {
+                "id": len(self._spec.get("loads_distributed") or []) + 1,
+                "bar_id": cb_bar.currentData(),
+                "x": sxi.value(), "y": syi.value(), "z": szi.value(),
+                "x_f": sxf.value(), "y_f": syf.value(), "z_f": szf.value(),
+                "force_global": [sqx.value(), sqy.value(), sqz.value()],
+            }
+        )
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
+    def _dlg_edit_distributed_load(self, index: int) -> None:
+        loads = self._spec.setdefault("loads_distributed", [])
+        if index < 0 or index >= len(loads):
+            return
+        c = loads[index]
+        bids = [b["id"] for b in self._spec["bars"]]
+        if not bids:
+            self._QMessageBox.warning(self, "Carga distribuida", "Agregá al menos una barra.")
+            return
+        d = self._QDialog(self)
+        d.setWindowTitle(f"Editar carga distribuida ({index + 1})")
+        form = self._QFormLayout(d)
+        cb_bar = self._QComboBox()
+        for bid in bids:
+            cb_bar.addItem(str(bid), bid)
+        cur_b = int(c.get("bar_id", bids[0]))
+        ix = cb_bar.findData(cur_b)
+        if ix >= 0:
+            cb_bar.setCurrentIndex(ix)
+
+        def _make_sb(lo=-1e6, hi=1e6, val=0.0):
+            sb = self._QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setValue(val)
+            return sb
+
+        sxi = _make_sb(val=float(c.get("x", 0)))
+        syi = _make_sb(val=float(c.get("y", 0)))
+        szi = _make_sb(val=float(c.get("z", 0)))
+        sxf = _make_sb(val=float(c.get("x_f", 0)))
+        syf = _make_sb(val=float(c.get("y_f", 0)))
+        szf = _make_sb(val=float(c.get("z_f", 0)))
+        fg = c.get("force_global") or [c.get("qx", 0), c.get("qy", 0), c.get("qz", 0)]
+        sqx = _make_sb(-1e9, 1e9, float(fg[0]))
+        sqy = _make_sb(-1e9, 1e9, float(fg[1]))
+        sqz = _make_sb(-1e9, 1e9, float(fg[2]))
+
+        form.addRow("Barra", cb_bar)
+        form.addRow(self._QLabel("— Inicio del tramo cargado (global) —"))
+        form.addRow("xi (cm)", sxi); form.addRow("yi (cm)", syi); form.addRow("zi (cm)", szi)
+        form.addRow(self._QLabel("— Fin del tramo cargado (global) —"))
+        form.addRow("xf (cm)", sxf); form.addRow("yf (cm)", syf); form.addRow("zf (cm)", szf)
+        form.addRow(self._QLabel("— Intensidad por unidad de longitud (global) —"))
+        form.addRow("qx (kN/cm)", sqx); form.addRow("qy (kN/cm)", sqy); form.addRow("qz (kN/cm)", sqz)
+
+        DBB = self._QDialogButtonBox
+        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
+        form.addRow(bb)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        if self._dialog_accepted(d) is False:
+            return
+        self._push_undo_snapshot()
+        c["bar_id"] = int(cb_bar.currentData())
+        c["x"] = sxi.value(); c["y"] = syi.value(); c["z"] = szi.value()
+        c["x_f"] = sxf.value(); c["y_f"] = syf.value(); c["z_f"] = szf.value()
+        c["force_global"] = [sqx.value(), sqy.value(), sqz.value()]
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
     def _open_inspector_edit(self, table: Any, row: int) -> None:
         if table is self._tbl_nodes:
             it = self._tbl_nodes.item(row, 0)
@@ -3554,7 +3690,13 @@ class FtoolMainWindow(_QMainWindow):
                 except ValueError:
                     pass
         elif table is self._tbl_loads:
-            self._dlg_edit_load(row)
+            it = self._tbl_loads.item(row, 0)
+            if it is not None:
+                role_data = it.data(self._user_role)
+                if role_data and role_data[0] == "dist_load":
+                    self._dlg_edit_distributed_load(role_data[1])
+                else:
+                    self._dlg_edit_load(row)
 
     def _table_context_menu(self, table: Any, pos: Any) -> None:
         item = table.itemAt(pos)
@@ -3582,6 +3724,8 @@ class FtoolMainWindow(_QMainWindow):
             self._delete_bar(int(ident))
         elif kind == "load":
             self._delete_load(int(ident))
+        elif kind == "dist_load":
+            self._delete_dist_load(int(ident))
         elif kind == "material":
             self._delete_material_key(str(ident))
 
@@ -3629,6 +3773,9 @@ class FtoolMainWindow(_QMainWindow):
         self._spec["loads_point"] = [
             c for c in self._spec.get("loads_point") or [] if c.get("bar_id") not in bars_drop
         ]
+        self._spec["loads_distributed"] = [
+            c for c in self._spec.get("loads_distributed") or [] if c.get("bar_id") not in bars_drop
+        ]
         self._spec["bars"] = [b for b in self._spec["bars"] if b["id"] not in bars_drop]
         self._spec["nodes"] = [n for n in self._spec["nodes"] if n["id"] != nid]
         self._invalidate_solution()
@@ -3640,6 +3787,9 @@ class FtoolMainWindow(_QMainWindow):
         self._spec["loads_point"] = [
             c for c in self._spec.get("loads_point") or [] if c.get("bar_id") != bid
         ]
+        self._spec["loads_distributed"] = [
+            c for c in self._spec.get("loads_distributed") or [] if c.get("bar_id") != bid
+        ]
         self._spec["bars"] = [b for b in self._spec["bars"] if b["id"] != bid]
         self._invalidate_solution()
         self._refresh_tree()
@@ -3647,6 +3797,15 @@ class FtoolMainWindow(_QMainWindow):
 
     def _delete_load(self, index: int) -> None:
         loads = self._spec.setdefault("loads_point", [])
+        if 0 <= index < len(loads):
+            self._push_undo_snapshot()
+            loads.pop(index)
+        self._invalidate_solution()
+        self._refresh_tree()
+        self._redraw()
+
+    def _delete_dist_load(self, index: int) -> None:
+        loads = self._spec.setdefault("loads_distributed", [])
         if 0 <= index < len(loads):
             self._push_undo_snapshot()
             loads.pop(index)

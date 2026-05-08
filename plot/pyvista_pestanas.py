@@ -229,7 +229,11 @@ def _collect_escalonado_franja_quads(
     color_neg: str,
     color_zero: str,
 ) -> List[Tuple[np.ndarray, str]]:
-    """Igual que ``_rellenar_franjas_diagrama_corte_3d`` pero devuelve quads."""
+    """
+    Quads/triángulos para el relleno del diagrama escalonado (o lineal a trozos).
+    Soporta tanto segmentos constantes (cargas puntuales) como con rampa
+    (cargas distribuidas).  Cuando hay cruce de cero se generan dos triángulos.
+    """
     out: List[Tuple[np.ndarray, str]] = []
     if x_b.size < 2:
         return out
@@ -239,20 +243,27 @@ def _collect_escalonado_franja_quads(
         va, vb = float(v_b[k]), float(v_b[k + 1])
         if abs(xb - xa) < 1e-12:
             continue
-        if not np.isclose(va, vb, rtol=1e-9, atol=1e-12 * max(1.0, abs(va), abs(vb))):
-            continue
         base_a = origin + xa * x_local
         base_b = origin + xb * x_local
-        top_a = origin + xa * x_local + va * escala_v * offset_local
-        top_b = origin + xb * x_local + vb * escala_v * offset_local
-        quad = np.vstack([base_a, base_b, top_b, top_a])
-        if abs(va) <= atol:
-            col = color_zero
-        elif va > 0:
-            col = color_pos
+        top_a = base_a + va * escala_v * offset_local
+        top_b = base_b + vb * escala_v * offset_local
+
+        # Cruce de cero: dividir en dos triángulos
+        if va * vb < 0 and abs(vb - va) > 1e-18:
+            x_m = xa + abs(va) / abs(vb - va) * (xb - xa)
+            x_m = float(np.clip(x_m, min(xa, xb), max(xa, xb)))
+            base_m = origin + x_m * x_local
+            tri1 = np.vstack([base_a, base_m, top_a])
+            col1 = color_zero if abs(va) <= atol else (color_pos if va > 0 else color_neg)
+            out.append((tri1, col1))
+            tri2 = np.vstack([base_m, base_b, top_b])
+            col2 = color_zero if abs(vb) <= atol else (color_pos if vb > 0 else color_neg)
+            out.append((tri2, col2))
         else:
-            col = color_neg
-        out.append((quad, col))
+            quad = np.vstack([base_a, base_b, top_b, top_a])
+            v_avg = (va + vb) / 2.0
+            col = color_zero if abs(v_avg) <= atol else (color_pos if v_avg > 0 else color_neg)
+            out.append((quad, col))
     return out
 
 
@@ -617,21 +628,56 @@ def _add_fuerzas_globales(
 ) -> None:
     for barra in barras:
         for carga in getattr(barra, "cargas", []) or []:
-            F = _vector_global_carga_puntual(carga)
-            P_raw = np.array(
-                [float(getattr(carga, "x", 0.0)), float(getattr(carga, "y", 0.0)), float(getattr(carga, "z", 0.0))],
-                dtype=float,
-            )
-            P = _punto_carga_banda_superior_ipn(barra, P_raw, h_perfil)
-            for i in range(3):
-                if abs(F[i]) <= tol:
+            if getattr(carga, "is_distributed", False):
+                F_int = np.asarray(
+                    getattr(carga, "force_global_intensity", np.zeros(3)), dtype=float
+                ).ravel()[:3]
+                F_mag = float(np.linalg.norm(F_int))
+                if F_mag <= tol:
                     continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(F[i]))
-                tail = P - longitud_vector * u
-                ln = pv.Line(tail, P)
-                if ln.n_points > 0:
-                    plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
+                F_dir = F_int / F_mag
+                p_start = np.array(
+                    [float(getattr(carga, "x", 0.0)),
+                     float(getattr(carga, "y", 0.0)),
+                     float(getattr(carga, "z", 0.0))], dtype=float
+                )
+                p_end = np.array(
+                    [float(getattr(carga, "x_f", p_start[0])),
+                     float(getattr(carga, "y_f", p_start[1])),
+                     float(getattr(carga, "z_f", p_start[2]))], dtype=float
+                )
+                n_arrows = max(3, min(9, int(np.linalg.norm(p_end - p_start) / max(longitud_vector * 0.7, 1e-9)) + 3))
+                arrow_pts = [p_start + t * (p_end - p_start) for t in np.linspace(0, 1, n_arrows)]
+                tips = []
+                for pt in arrow_pts:
+                    P = _punto_carga_banda_superior_ipn(barra, pt, h_perfil)
+                    tail = P - longitud_vector * F_dir
+                    ln = pv.Line(tail, P)
+                    if ln.n_points > 0:
+                        plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
+                    tips.append(P.copy())
+                # Linha superior conectando puntas
+                if len(tips) >= 2:
+                    tp = np.array(tips, dtype=float)
+                    ln_top = pv.lines_from_points(tp)
+                    if ln_top.n_points > 0:
+                        plotter.add_mesh(ln_top.tube(radius=tube_r * 0.7), color="black", smooth_shading=True)
+            else:
+                F = _vector_global_carga_puntual(carga)
+                P_raw = np.array(
+                    [float(getattr(carga, "x", 0.0)), float(getattr(carga, "y", 0.0)), float(getattr(carga, "z", 0.0))],
+                    dtype=float,
+                )
+                P = _punto_carga_banda_superior_ipn(barra, P_raw, h_perfil)
+                for i in range(3):
+                    if abs(F[i]) <= tol:
+                        continue
+                    u = np.zeros(3, dtype=float)
+                    u[i] = float(np.sign(F[i]))
+                    tail = P - longitud_vector * u
+                    ln = pv.Line(tail, P)
+                    if ln.n_points > 0:
+                        plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
 
     if cargas_nodales:
         for cn in cargas_nodales:

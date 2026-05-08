@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from core.barra import Barra
+from core.carga_distribuida import CargaDistribuida
 from core.carga_puntual import CargaPuntual, reacciones_de_empotramiento
 from core.estructura import Estructura
 from core.nodos import Nodo
@@ -201,10 +202,52 @@ def build_estructura_from_spec(spec: Dict[str, Any]) -> Estructura:
         carga.F_z = np.zeros(3, dtype=float)
         bar.cargas.append(carga)
 
+    dist_loads = spec.get("loads_distributed") or spec.get("cargas_distribuidas") or []
+    _dl_id_base = len(loads)
+    for k, raw in enumerate(dist_loads):
+        bid = int(raw.get("bar_id") or raw["barra"])
+        bar = bars_by_id.get(bid)
+        if bar is None:
+            raise ValueError(f"Carga distribuida {k}: bar_id {bid} no existe")
+        cid = int(raw.get("id", _dl_id_base + k + 1))
+
+        net = _net_global_force(raw)  # intensidad por unidad de longitud [qx, qy, qz]
+
+        # Si se proveen coordenadas globales de inicio/fin, usarlas.
+        # Si no, usar los extremos de la barra.
+        ni_obj = bar.nodo_i_obj
+        nf_obj = bar.nodo_f_obj
+
+        if "x" in raw and "x_f" in raw:
+            xi, yi, zi = float(raw["x"]), float(raw.get("y", 0.0)), float(raw.get("z", 0.0))
+            xf, yf, zf = float(raw["x_f"]), float(raw.get("y_f", 0.0)), float(raw.get("z_f", 0.0))
+        elif "xi_local" in raw:
+            # Coordenadas locales → convertir a globales
+            bar.calcular_longitud_y_bases()
+            xi_l = float(raw.get("xi_local", 0.0))
+            xf_l = float(raw.get("xf_local", bar.L or 0.0))
+            ni_c = ni_obj.get_coord()
+            xi, yi, zi = (ni_c + xi_l * bar.x_local).tolist()
+            xf, yf, zf = (ni_c + xf_l * bar.x_local).tolist()
+        else:
+            xi, yi, zi = float(ni_obj.x), float(ni_obj.y), float(ni_obj.z)
+            xf, yf, zf = float(nf_obj.x), float(nf_obj.y), float(nf_obj.z)
+
+        carga = CargaDistribuida(
+            id=cid,
+            x=xi, y=yi, z=zi,
+            x_f=xf, y_f=yf, z_f=zf,
+            force_global_intensity=net,
+        )
+        bar.cargas.append(carga)
+
     for barra in est.barras:
         for carga in barra.cargas:
             with contextlib.redirect_stdout(io.StringIO()):
-                reacciones_de_empotramiento(carga, barra)
+                if getattr(carga, "is_distributed", False):
+                    carga.reacciones_de_empotramiento(barra)
+                else:
+                    reacciones_de_empotramiento(carga, barra)
         barra.transformar_reacciones_empotramiento_a_global()
 
     return est

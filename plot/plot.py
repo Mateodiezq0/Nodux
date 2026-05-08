@@ -1094,37 +1094,76 @@ def _dibujo_vectores_fuerza_global(
 
     for barra in barras:
         for carga in getattr(barra, "cargas", []) or []:
-            F = _vector_global_carga_puntual(carga)
-            P_raw = np.array(
-                [
-                    float(getattr(carga, "x", 0.0)),
-                    float(getattr(carga, "y", 0.0)),
-                    float(getattr(carga, "z", 0.0)),
-                ],
-                dtype=float,
-            )
-            P = _punto_carga_banda_superior_ipn(barra, P_raw, altura_perfil_h)
-            for i in range(3):
-                if abs(F[i]) <= tol:
+            if getattr(carga, "is_distributed", False):
+                # Carga distribuida: dibujar peine de flechas entre inicio y fin
+                F_int = np.asarray(
+                    getattr(carga, "force_global_intensity", np.zeros(3)), dtype=float
+                ).ravel()[:3]
+                F_mag = np.linalg.norm(F_int)
+                if F_mag <= tol:
                     continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(F[i]))
-                tail = P - longitud_vector * u
-                ax.quiver(
-                    tail[0],
-                    tail[1],
-                    tail[2],
-                    u[0],
-                    u[1],
-                    u[2],
-                    length=longitud_vector,
-                    normalize=True,
-                    color=color,
-                    linewidth=1.35,
-                    arrow_length_ratio=0.22,
+                F_dir = F_int / F_mag
+                p_start = np.array(
+                    [float(getattr(carga, "x", 0.0)),
+                     float(getattr(carga, "y", 0.0)),
+                     float(getattr(carga, "z", 0.0))], dtype=float
                 )
-                extras.append(P.copy())
-                extras.append(tail.copy())
+                p_end = np.array(
+                    [float(getattr(carga, "x_f", p_start[0])),
+                     float(getattr(carga, "y_f", p_start[1])),
+                     float(getattr(carga, "z_f", p_start[2]))], dtype=float
+                )
+                n_arrows = max(3, min(9, int(np.linalg.norm(p_end - p_start) / (longitud_vector * 0.7)) + 3))
+                arrow_pts = [p_start + t * (p_end - p_start) for t in np.linspace(0, 1, n_arrows)]
+                tips = []
+                for pt in arrow_pts:
+                    P = _punto_carga_banda_superior_ipn(barra, pt, altura_perfil_h)
+                    tail = P - longitud_vector * F_dir
+                    ax.quiver(
+                        tail[0], tail[1], tail[2],
+                        F_dir[0], F_dir[1], F_dir[2],
+                        length=longitud_vector, normalize=True,
+                        color=color, linewidth=1.35, arrow_length_ratio=0.22,
+                    )
+                    extras.append(P.copy())
+                    extras.append(tail.copy())
+                    tips.append(P.copy())
+                # Línea superior que une las puntas (indica carga continua)
+                if len(tips) >= 2:
+                    tp = np.array(tips, dtype=float)
+                    ax.plot(tp[:, 0], tp[:, 1], tp[:, 2], color=color, linewidth=1.2)
+            else:
+                F = _vector_global_carga_puntual(carga)
+                P_raw = np.array(
+                    [
+                        float(getattr(carga, "x", 0.0)),
+                        float(getattr(carga, "y", 0.0)),
+                        float(getattr(carga, "z", 0.0)),
+                    ],
+                    dtype=float,
+                )
+                P = _punto_carga_banda_superior_ipn(barra, P_raw, altura_perfil_h)
+                for i in range(3):
+                    if abs(F[i]) <= tol:
+                        continue
+                    u = np.zeros(3, dtype=float)
+                    u[i] = float(np.sign(F[i]))
+                    tail = P - longitud_vector * u
+                    ax.quiver(
+                        tail[0],
+                        tail[1],
+                        tail[2],
+                        u[0],
+                        u[1],
+                        u[2],
+                        length=longitud_vector,
+                        normalize=True,
+                        color=color,
+                        linewidth=1.35,
+                        arrow_length_ratio=0.22,
+                    )
+                    extras.append(P.copy())
+                    extras.append(tail.copy())
 
     if cargas_nodales:
         for cn in cargas_nodales:
@@ -1189,9 +1228,13 @@ def _coord_local_x_sobre_barra(barra: Any, punto_global: np.ndarray) -> float:
 
 def _diagrama_corte_local_barra(barra: Any, idx_corte: int) -> tuple:
     """
-    Diagrama escalonado de la componente local idx_corte del vector de fuerzas
-    (Fx,Fy,Fz) en extremos: idx 0 = eje barra (N), 1 = V_y, 2 = V_z.
-    Retorna (x_plot, v_plot, L, V_i, V_f).
+    Diagrama de la componente local idx_corte del esfuerzo cortante/normal:
+      idx 0 = N_x,  1 = V_y,  2 = V_z.
+
+    Cargas puntuales → salto vertical en x_c.
+    Cargas distribuidas uniformes → rampa lineal entre x_local_start y x_local_end.
+
+    Retorna (x_plot, v_plot, L, V_i, V_f).  El diagrama es ahora lineal a trozos.
     """
     if idx_corte not in (0, 1, 2):
         raise ValueError("idx_corte debe ser 0 (N_x), 1 (V_y) o 2 (V_z)")
@@ -1215,35 +1258,77 @@ def _diagrama_corte_local_barra(barra: Any, idx_corte: int) -> tuple:
     V_i = float(si[idx_corte]) if si.size > idx_corte else 0.0
     V_f = float(sf[idx_corte]) if sf.size > idx_corte else 0.0
 
-    eventos = []
+    # Clasificar cargas: saltos puntuales vs. rampas distribuidas
+    point_eventos: List = []   # (x_c, salto)
+    ramp_eventos: List = []    # (x_a, x_b, intensidad_por_unidad_longitud)
+
     for carga in getattr(barra, "cargas", []) or []:
         f_local = np.asarray(getattr(carga, "f_local", np.zeros(3)), dtype=float).ravel()
         q_loc = float(f_local[idx_corte]) if f_local.size > idx_corte else 0.0
-        p = np.asarray(
-            [float(getattr(carga, "x", 0.0)), float(getattr(carga, "y", 0.0)), float(getattr(carga, "z", 0.0))],
-            dtype=float,
-        )
-        x_c = _coord_local_x_sobre_barra(barra, p)
-        if L > 0.0:
-            x_c = max(0.0, min(L, x_c))
-        eventos.append((x_c, q_loc))
 
-    eventos.sort(key=lambda t: t[0])
+        if getattr(carga, "is_distributed", False):
+            x_a = float(getattr(carga, "x_local_start", 0.0))
+            x_b = float(getattr(carga, "x_local_end", L))
+            c_len = max(abs(x_b - x_a), 1e-12)
+            q_int = q_loc / c_len  # intensidad por unidad de longitud en coord. local
+            if L > 0.0:
+                x_a = max(0.0, min(L, x_a))
+                x_b = max(0.0, min(L, x_b))
+            if x_a > x_b:
+                x_a, x_b = x_b, x_a
+            ramp_eventos.append((x_a, x_b, q_int))
+        else:
+            p = np.asarray(
+                [float(getattr(carga, "x", 0.0)),
+                 float(getattr(carga, "y", 0.0)),
+                 float(getattr(carga, "z", 0.0))],
+                dtype=float,
+            )
+            x_c = _coord_local_x_sobre_barra(barra, p)
+            if L > 0.0:
+                x_c = max(0.0, min(L, x_c))
+            point_eventos.append((x_c, q_loc))
 
-    x_plot = [0.0]
-    v_plot = [V_i]
-    V_actual = V_i
+    point_eventos.sort(key=lambda t: t[0])
 
-    for x_c, q_jump in eventos:
-        x_plot.extend([x_c, x_c])
-        v_plot.extend([V_actual, V_actual + q_jump])
-        V_actual = V_actual + q_jump
+    # V(x) justo ANTES de cualquier salto puntual en x (incluye contribución de rampas)
+    def _V_at(x_query: float) -> float:
+        V = V_i
+        for x_c, q_j in point_eventos:
+            if x_c < x_query - 1e-10:
+                V += q_j
+        for x_a, x_b, q_int in ramp_eventos:
+            if x_query > x_a + 1e-10:
+                V += q_int * (min(x_query, x_b) - x_a)
+        return V
 
-    x_plot.append(L)
-    v_plot.append(V_actual)
+    # Puntos de quiebre: extremos de barras, saltos puntuales y límites de rampas
+    xs_set: set = {0.0, float(L)}
+    for xc, _ in point_eventos:
+        xs_set.add(float(xc))
+    for xa, xb, _ in ramp_eventos:
+        xs_set.add(float(xa))
+        xs_set.add(float(xb))
+    breakpoints = sorted(xs_set)
 
-    x_plot.append(L)
-    v_plot.append(V_actual + V_f)
+    x_plot: List[float] = []
+    v_plot: List[float] = []
+
+    for xk in breakpoints:
+        V_before = _V_at(xk)
+        jumps = sum(q_j for xc, q_j in point_eventos if abs(xc - xk) < 1e-10)
+
+        if abs(xk - float(L)) < 1e-10:
+            # Cierre: V justo antes del apoyo final + reacción de apoyo
+            V_with_jumps = V_before + jumps
+            x_plot.extend([xk, xk])
+            v_plot.extend([V_with_jumps, V_with_jumps + V_f])
+        else:
+            x_plot.append(xk)
+            v_plot.append(V_before)
+            if abs(jumps) > 1e-12:
+                x_plot.append(xk)
+                v_plot.append(V_before + jumps)
 
     return np.asarray(x_plot, dtype=float), np.asarray(v_plot, dtype=float), L, V_i, V_f
 
@@ -1314,20 +1399,42 @@ def _rellenar_franjas_diagrama_corte_3d(
         va, vb = float(v_b[k]), float(v_b[k + 1])
         if abs(xb - xa) < 1e-12:
             continue
-        if not np.isclose(va, vb, rtol=1e-9, atol=1e-12 * max(1.0, abs(va), abs(vb))):
-            continue
         base_a = origin + xa * x_local
         base_b = origin + xb * x_local
-        top_a = origin + xa * x_local + va * escala_v * offset_local
-        top_b = origin + xb * x_local + vb * escala_v * offset_local
-        quad = [base_a, base_b, top_b, top_a]
-        extras.extend(quad)
-        if abs(va) <= atol:
-            caras_zero.append(quad)
-        elif va > 0:
-            caras_pos.append(quad)
+        top_a = base_a + va * escala_v * offset_local
+        top_b = base_b + vb * escala_v * offset_local
+
+        # Cruce de cero: dividir en dos triángulos
+        if va * vb < 0 and abs(vb - va) > 1e-18:
+            x_m = xa + abs(va) / abs(vb - va) * (xb - xa)
+            x_m = float(np.clip(x_m, min(xa, xb), max(xa, xb)))
+            base_m = origin + x_m * x_local
+            tri1 = [base_a, base_m, top_a]   # lado de va
+            tri2 = [base_m, base_b, top_b]   # lado de vb
+            extras.extend([base_a, base_m, top_a, base_m, base_b, top_b])
+            if abs(va) <= atol:
+                caras_zero.append(tri1)
+            elif va > 0:
+                caras_pos.append(tri1)
+            else:
+                caras_neg.append(tri1)
+            if abs(vb) <= atol:
+                caras_zero.append(tri2)
+            elif vb > 0:
+                caras_pos.append(tri2)
+            else:
+                caras_neg.append(tri2)
         else:
-            caras_neg.append(quad)
+            # Trapezoide sin cruce de cero (incluye el caso constante)
+            quad = [base_a, base_b, top_b, top_a]
+            extras.extend(quad)
+            v_avg = (va + vb) / 2.0
+            if abs(v_avg) <= atol:
+                caras_zero.append(quad)
+            elif v_avg > 0:
+                caras_pos.append(quad)
+            else:
+                caras_neg.append(quad)
 
     for caras, col in (
         (caras_pos, color_pos),
@@ -1654,6 +1761,7 @@ def _diagrama_momento_my_local_barra(barra: Any) -> tuple:
     M_cur = My_i
     i = 0
     n = len(x_b)
+    _N_RAMP = 8  # puntos intermedios para capturar la parábola en rampas
     while i < n - 1:
         xa = float(x_b[i])
         xb = float(x_b[i + 1])
@@ -1661,9 +1769,23 @@ def _diagrama_momento_my_local_barra(barra: Any) -> tuple:
             i += 1
             continue
         va = float(v_b[i])
-        M_cur = M_cur + va * (xb - xa)
-        xs.append(xb)
-        ms.append(M_cur)
+        vb = float(v_b[i + 1])
+        if not np.isclose(va, vb, rtol=1e-6, atol=1e-9 * max(1.0, abs(va), abs(vb))):
+            # Segmento con rampa: M varía parabólicamente; muestrear intermedios
+            M_at_xa = M_cur
+            dx = xb - xa
+            for k in range(1, _N_RAMP + 1):
+                t = k / _N_RAMP
+                xi = xa + t * dx
+                # M(xi) = M(xa) + integral_xa^xi V(t) dt  (V lineal: V = va + (vb-va)/dx * (t-xa))
+                M_xi = M_at_xa + va * (xi - xa) + (vb - va) / (2.0 * dx) * (xi - xa) ** 2
+                xs.append(xi)
+                ms.append(M_xi)
+            M_cur = ms[-1]
+        else:
+            M_cur = M_cur + va * (xb - xa)
+            xs.append(xb)
+            ms.append(M_cur)
         i += 1
 
     return np.asarray(xs, dtype=float), np.asarray(ms, dtype=float), float(L)
@@ -2016,6 +2138,7 @@ def _diagrama_momento_mz_local_barra(barra: Any) -> tuple:
     M_cur = Mz_i
     i = 0
     n = len(x_b)
+    _N_RAMP = 8  # puntos intermedios para capturar la parábola en rampas
     while i < n - 1:
         xa = float(x_b[i])
         xb = float(x_b[i + 1])
@@ -2023,9 +2146,23 @@ def _diagrama_momento_mz_local_barra(barra: Any) -> tuple:
             i += 1
             continue
         va = float(v_b[i])
-        M_cur = M_cur - va * (xb - xa)
-        xs.append(xb)
-        ms.append(M_cur)
+        vb = float(v_b[i + 1])
+        if not np.isclose(va, vb, rtol=1e-6, atol=1e-9 * max(1.0, abs(va), abs(vb))):
+            # Segmento con rampa: M varía parabólicamente; muestrear intermedios
+            M_at_xa = M_cur
+            dx = xb - xa
+            for k in range(1, _N_RAMP + 1):
+                t = k / _N_RAMP
+                xi = xa + t * dx
+                # M(xi) = M(xa) - integral_xa^xi V(t) dt
+                M_xi = M_at_xa - (va * (xi - xa) + (vb - va) / (2.0 * dx) * (xi - xa) ** 2)
+                xs.append(xi)
+                ms.append(M_xi)
+            M_cur = ms[-1]
+        else:
+            M_cur = M_cur - va * (xb - xa)
+            xs.append(xb)
+            ms.append(M_cur)
         i += 1
 
     return np.asarray(xs, dtype=float), np.asarray(ms, dtype=float), float(L)
