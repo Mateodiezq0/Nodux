@@ -315,14 +315,7 @@ def build_ipn_mesh(
             if raw_poly is not None:
                 pts_prof = np.asarray(raw_poly, dtype=float)
 
-        custom_ipn = (
-            ipn_dims_per_bar_id is not None
-            and bid_int is not None
-            and bid_int in ipn_dims_per_bar_id
-        )
-        if custom_ipn:
-            dims_src = ipn_dims_per_bar_id[bid_int]
-        elif (
+        if (
             pts_prof is not None
             and pts_prof.ndim == 2
             and pts_prof.shape[0] >= 3
@@ -335,6 +328,14 @@ def build_ipn_mesh(
             if mesh_p.n_points > 0:
                 meshes.append(mesh_p)
             continue
+
+        custom_ipn = (
+            ipn_dims_per_bar_id is not None
+            and bid_int is not None
+            and bid_int in ipn_dims_per_bar_id
+        )
+        if custom_ipn:
+            dims_src = ipn_dims_per_bar_id[bid_int]
         elif (
             bid_int is not None
             and tube_outer_radius_per_bar_id is not None

@@ -157,9 +157,14 @@ def build_estructura_from_spec(spec: Dict[str, Any]) -> Estructura:
         nodos_list.append(n)
         nodos_dict[nid] = n
 
-    bars_spec = spec.get("bars") or spec.get("barras")
-    if not bars_spec:
+    if "bars" in spec:
+        bars_spec = spec["bars"]
+    elif "barras" in spec:
+        bars_spec = spec["barras"]
+    else:
         raise ValueError("Falta la lista 'bars' (o 'barras')")
+    if not isinstance(bars_spec, list):
+        raise ValueError("'bars' (o 'barras') debe ser una lista")
     for raw in bars_spec:
         bid = int(raw["id"])
         ni = int(raw.get("i") or raw.get("nodo_i"))

@@ -18,7 +18,6 @@ RESULTADOS_SHEET_ORDER: List[str] = [
     "K_locales",
     "F_locales_de_cargas",
     "R_locales_de_empotramiento_cargas",
-    "Cargas_nodales_locales",
     "Cargas_Nodales_Aplicadas",
     "Matriz_R_2D",
     "Matriz_Rotacion_T",
@@ -257,25 +256,6 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
             )
     df_r_locales_emp_cargas = pd.DataFrame(datos_r_locales_emp_cargas)
 
-    datos_cargas_nodales_locales = []
-    for barra in getattr(estructura, "barras", []):
-        for carga in getattr(barra, "cargas", []) or []:
-            c_nod = np.asarray(getattr(carga, "carga_nodal_local", np.zeros(12)), dtype=float).ravel()
-            if c_nod.size < 12:
-                tmp = np.zeros(12, dtype=float)
-                tmp[: c_nod.size] = c_nod
-                c_nod = tmp
-            datos_cargas_nodales_locales.append(
-                {
-                    "Carga ID": getattr(carga, "id", None),
-                    "Barra ID": getattr(barra, "id", None),
-                    "Nodo Inicial": getattr(barra, "nodo_i", None),
-                    "Nodo Final": getattr(barra, "nodo_f", None),
-                    **{nombres_reac[i]: float(c_nod[i]) for i in range(12)},
-                }
-            )
-    df_cargas_nodales_locales = pd.DataFrame(datos_cargas_nodales_locales)
-
     datos_cargas_nodales_aplicadas = []
     for cn in getattr(estructura, "cargas_nodales", []) or []:
         datos_cargas_nodales_aplicadas.append(
@@ -485,7 +465,6 @@ def collect_resultados_dataframes(estructura: Any, F_internas: Optional[List[np.
         "Matriz_R_2D": df_matriz_R,
         "F_locales_de_cargas": df_f_locales_cargas,
         "R_locales_de_empotramiento_cargas": df_r_locales_emp_cargas,
-        "Cargas_nodales_locales": df_cargas_nodales_locales,
         "Cargas_Nodales_Aplicadas": df_cargas_nodales_aplicadas,
         "Cargas_nodales_equivalentes_Globales": df_cargas_globales_nudos.copy(),
         "Vector_Nodal_Equivalente": df_vector_nodal,

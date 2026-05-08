@@ -782,6 +782,15 @@ QTableWidget::item:selected {{
     background-color: {t.selection_bg};
     color: {t.selection_fg};
 }}
+QHeaderView {{
+    background-color: {t.header_bg};
+}}
+QTableCornerButton::section {{
+    background-color: {t.header_bg};
+    border: none;
+    border-right: 1px solid {t.header_border};
+    border-bottom: 1px solid {t.header_border};
+}}
 QHeaderView::section {{
     background-color: {t.header_bg};
     color: {t.header_fg};

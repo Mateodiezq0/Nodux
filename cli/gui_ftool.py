@@ -64,13 +64,27 @@ def _default_spec() -> Dict[str, Any]:
 
 IPN_DEFAULT = {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
 
+
+def _section_type_lower(sec: Any) -> str:
+    if not isinstance(sec, dict):
+        return ""
+    return str(sec.get("type", "")).lower().strip()
+
+
+def _section_allows_per_bar_ipn_viz(sec: Any) -> bool:
+    """``materials[*].viz`` IPN por barra solo si la sección es perfil I (sin tipo = legado)."""
+    st = _section_type_lower(sec)
+    if not st:
+        return True
+    return st in ("i_beam", "i", "ipe", "ipn")
+
+
 # Títulos cortos para pestañas del visor de resultados (mismas claves que ``cli/resultados_export``).
 _RESULTADOS_TAB_TITLES = {
     "K_locales": "K locales",
     "Matriz_R_2D": "Matriz R (12×12)",
     "F_locales_de_cargas": "F locales (cargas)",
     "R_locales_de_empotramiento_cargas": "R locales de empot. (reacciones)",
-    "Cargas_nodales_locales": "Cargas nodales locales",
     "Cargas_Nodales_Aplicadas": "Cargas nodales aplicadas (en nodo)",
     "Cargas_nodales_equivalentes_Globales": "Cargas nodales equivalentes Globales",
     "Vector_Nodal_Equivalente": "Vector nodal equivalente F (global)",
@@ -106,6 +120,31 @@ def _msg_is_yes(MB: Any, reply: Any) -> bool:
     if SB is not None:
         return reply == SB.Yes
     return reply == MB.Yes
+
+
+def _apply_inspector_header_resize_modes(tbl: Any, backend: str) -> None:
+    """Cabecera: columnas al contenido y última en stretch (evita huecos sin pintar con Fusion/Windows)."""
+    hh = tbl.horizontalHeader()
+    hh.setStretchLastSection(False)
+    n = tbl.columnCount()
+    if n <= 0:
+        return
+    if backend == "PySide6":
+        from PySide6.QtWidgets import QHeaderView
+
+        _rtc = QHeaderView.ResizeMode.ResizeToContents
+        _stretch = QHeaderView.ResizeMode.Stretch
+    else:
+        from PyQt5.QtWidgets import QHeaderView
+
+        _rtc = QHeaderView.ResizeToContents
+        _stretch = QHeaderView.Stretch
+    for c in range(n - 1):
+        hh.setSectionResizeMode(c, _rtc)
+    hh.setSectionResizeMode(n - 1, _stretch)
+    vp = hh.viewport()
+    if vp is not None:
+        vp.update()
 
 
 def _try_qt():
@@ -636,7 +675,7 @@ class FtoolMainWindow(_QMainWindow):
             tbl.verticalHeader().setVisible(False)
             tbl.verticalHeader().setDefaultSectionSize(20)
             tbl.setContextMenuPolicy(Qt.CustomContextMenu)
-            tbl.horizontalHeader().setStretchLastSection(True)
+            tbl.horizontalHeader().setStretchLastSection(False)
             tbl.horizontalHeader().setHighlightSections(False)
 
         def _mk_model_tab(table: Any, add_tip: str, add_slot: Any) -> Any:
@@ -709,7 +748,7 @@ class FtoolMainWindow(_QMainWindow):
             tbl.verticalHeader().setVisible(False)
             tbl.verticalHeader().setDefaultSectionSize(20)
             tbl.setContextMenuPolicy(Qt.CustomContextMenu)
-            tbl.horizontalHeader().setStretchLastSection(True)
+            tbl.horizontalHeader().setStretchLastSection(False)
             tbl.horizontalHeader().setHighlightSections(False)
 
         mat_wrap = QWidget()
@@ -1454,6 +1493,8 @@ class FtoolMainWindow(_QMainWindow):
         import pandas as pd
 
         tbl.clear()
+        tbl.setColumnCount(0)
+        tbl.setRowCount(0)
         extra_group_row = 0
         tbl.setRowCount(len(df) + extra_group_row)
         tbl.setColumnCount(len(df.columns))
@@ -1626,9 +1667,11 @@ class FtoolMainWindow(_QMainWindow):
 
         for tbl in (self._tbl_nodes, self._tbl_bars, self._tbl_loads):
             tbl.blockSignals(True)
+            tbl.clear()
 
         try:
             self._tbl_nodes.setRowCount(0)
+            self._tbl_nodes.setColumnCount(0)
             self._tbl_nodes.setColumnCount(5)
             self._tbl_nodes.setHorizontalHeaderLabels(
                 ["ID", "X (cm)", "Y (cm)", "Z (cm)", "Restricciones"]
@@ -1654,6 +1697,7 @@ class FtoolMainWindow(_QMainWindow):
                     self._tbl_nodes.setItem(r, c, it)
 
             self._tbl_bars.setRowCount(0)
+            self._tbl_bars.setColumnCount(0)
             self._tbl_bars.setColumnCount(4)
             self._tbl_bars.setHorizontalHeaderLabels(["ID", "Nodo i", "Nodo j", "Material"])
             for b in sorted(spec["bars"], key=lambda x: int(x["id"])):
@@ -1676,6 +1720,7 @@ class FtoolMainWindow(_QMainWindow):
             loads_d = spec.get("loads_distributed") or []
             loads_n = spec.get("loads_nodal") or []
             self._tbl_loads.setRowCount(0)
+            self._tbl_loads.setColumnCount(0)
             self._tbl_loads.setColumnCount(5)
             self._tbl_loads.setHorizontalHeaderLabels(
                 ["Nº", "Tipo", "Barra/Nodo", "Posición / Rango", "Fuerza / Intensidad"]
@@ -1741,6 +1786,7 @@ class FtoolMainWindow(_QMainWindow):
                 if 0 <= pr < tbl.rowCount():
                     tbl.selectRow(pr)
                 tbl.resizeColumnsToContents()
+                _apply_inspector_header_resize_modes(tbl, self._qt_backend)
         finally:
             for tbl in (self._tbl_nodes, self._tbl_bars, self._tbl_loads):
                 tbl.blockSignals(False)
@@ -1761,7 +1807,9 @@ class FtoolMainWindow(_QMainWindow):
                 if hasattr(_qt, "ItemFlag")
                 else _qt.ItemIsSelectable | _qt.ItemIsEnabled
             )
+            self._tbl_materials.clear()
             self._tbl_materials.setRowCount(0)
+            self._tbl_materials.setColumnCount(0)
             self._tbl_materials.setColumnCount(7)
             self._tbl_materials.setHorizontalHeaderLabels(
                 ["Nombre", "Tipo / forma", "E", "ν", "γ", "A (cm²)", "G"]
@@ -1811,6 +1859,7 @@ class FtoolMainWindow(_QMainWindow):
             if 0 <= prev < self._tbl_materials.rowCount():
                 self._tbl_materials.selectRow(prev)
             self._tbl_materials.resizeColumnsToContents()
+            _apply_inspector_header_resize_modes(self._tbl_materials, self._qt_backend)
         finally:
             self._tbl_materials.blockSignals(False)
 
@@ -1843,6 +1892,9 @@ class FtoolMainWindow(_QMainWindow):
                 continue
             mk = str(br.get("material") or "default")
             m = mats.get(mk) or {}
+            sec = m.get("section") or {}
+            if not _section_allows_per_bar_ipn_viz(sec):
+                continue
             vz = m.get("viz")
             if not isinstance(vz, dict):
                 continue
@@ -1869,12 +1921,16 @@ class FtoolMainWindow(_QMainWindow):
             bid = int(br["id"])
             mk = str(br.get("material") or "default")
             m = mats.get(mk) or {}
-            vz = m.get("viz")
-            if isinstance(vz, dict) and not vz.get("use_global", True):
-                if all(k in vz for k in ("h", "b", "tw", "tf")):
-                    continue
             sec = m.get("section") or {}
-            st = str(sec.get("type", "")).lower()
+            vz = m.get("viz")
+            if (
+                isinstance(vz, dict)
+                and not vz.get("use_global", True)
+                and all(k in vz for k in ("h", "b", "tw", "tf"))
+                and _section_allows_per_bar_ipn_viz(sec)
+            ):
+                continue
+            st = _section_type_lower(sec)
             if st in ("tube_circle", "tubo_circular", "pipe"):
                 try:
                     out[bid] = float(sec["D"]) / 2.0
@@ -1893,13 +1949,34 @@ class FtoolMainWindow(_QMainWindow):
             bid = int(br["id"])
             mk = str(br.get("material") or "default")
             m = mats.get(mk) or {}
+            sec = m.get("section") or {}
             vz = m.get("viz")
-            if isinstance(vz, dict) and not vz.get("use_global", True):
-                if all(k in vz for k in ("h", "b", "tw", "tf")):
-                    continue
+            if (
+                isinstance(vz, dict)
+                and not vz.get("use_global", True)
+                and all(k in vz for k in ("h", "b", "tw", "tf"))
+                and _section_allows_per_bar_ipn_viz(sec)
+            ):
+                continue
             poly = normalize_polygon_yz(m.get("profile_polygon_yz"))
             if poly:
                 out[bid] = poly
+                continue
+            st = _section_type_lower(sec)
+            if st in ("rectangle", "rect", "rectangular", "tube_rect", "tubo_rectangular", "box"):
+                try:
+                    bb = float(sec["b"])
+                    hh = float(sec["h"])
+                    if bb > 0.0 and hh > 0.0:
+                        y2, z2 = bb / 2.0, hh / 2.0
+                        out[bid] = [
+                            [-y2, -z2],
+                            [y2, -z2],
+                            [y2, z2],
+                            [-y2, z2],
+                        ]
+                except (KeyError, TypeError, ValueError):
+                    pass
         return out
 
     def _dlg_material_editor(self, edit_name: Optional[str]) -> None:
