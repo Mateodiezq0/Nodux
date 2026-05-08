@@ -1583,6 +1583,95 @@ def _try_import_qt():
         return None
 
 
+def install_zoom_toward_cursor(
+    plotter: Any,
+    zoom_in_factor: float = 0.88,
+    zoom_out_factor: float = 1.14,
+) -> None:
+    """
+    Guarda factores de zoom hacia cursor. El manejo real de la rueda se hace en Qt
+    (``FtoolMainWindow.eventFilter``) llamando a ``ftool_zoom_wheel_toward_pixel``,
+    para no duplicar el dolly VTK y no depender de vtkCallbackCommand en Python.
+    """
+    plotter._ftool_wheel_zoom_in = float(zoom_in_factor)
+    plotter._ftool_wheel_zoom_out = float(zoom_out_factor)
+
+
+def ftool_zoom_wheel_toward_pixel(plotter: Any, x: int, y: int, zoom_in: bool) -> bool:
+    """
+    Zoom en perspectiva anclado al píxel (x,y): intersección del rayo de vista con el plano
+    por el focal perpendicular al eje de vista. Devuelve True si aplicó zoom (y la GUI
+    puede consumir el evento Wheel).
+    """
+    _require_pyvista()
+    try:
+        iren = plotter.iren.interactor
+    except Exception:
+        return False
+    iren.SetEventPosition(int(x), int(y))
+    rw = iren.GetRenderWindow()
+    if rw is None:
+        return False
+    renderer = iren.FindPokedRenderer(int(x), int(y))
+    if renderer is None:
+        return False
+    camera = renderer.GetActiveCamera()
+    if camera.GetParallelProjection():
+        return False
+
+    C = np.array(camera.GetPosition(), dtype=float).ravel()[:3]
+    F = np.array(camera.GetFocalPoint(), dtype=float).ravel()[:3]
+    v = F - C
+    vn = float(np.linalg.norm(v))
+    if vn < 1e-12:
+        return False
+    v = v / vn
+
+    def _hom(renderer: Any, xd: float, yd: float, zd: float) -> np.ndarray:
+        renderer.SetDisplayPoint(float(xd), float(yd), float(zd))
+        renderer.DisplayToWorld()
+        wp = np.array(renderer.GetWorldPoint(), dtype=float).ravel()
+        if wp.size < 4:
+            return np.zeros(3, dtype=float)
+        w = float(wp[3])
+        if abs(w) < 1e-12:
+            return wp[:3].astype(float)
+        return (wp[:3] / w).astype(float)
+
+    xf, yf = float(x), float(y)
+    w0 = _hom(renderer, xf, yf, 0.0)
+    w1 = _hom(renderer, xf, yf, 1.0)
+    D = w1 - w0
+    dn = float(np.linalg.norm(D))
+    if dn < 1e-12:
+        return False
+    D = D / dn
+
+    denom = float(np.dot(D, v))
+    if abs(denom) < 1e-9:
+        A = F.copy()
+    else:
+        t = float(np.dot(F - w0, v) / denom)
+        A = w0 + t * D
+
+    zi = float(getattr(plotter, "_ftool_wheel_zoom_in", 0.88))
+    zo = float(getattr(plotter, "_ftool_wheel_zoom_out", 1.14))
+    fac = zi if zoom_in else zo
+    Cn = A + fac * (C - A)
+    Fn = A + fac * (F - A)
+    camera.SetPosition(float(Cn[0]), float(Cn[1]), float(Cn[2]))
+    camera.SetFocalPoint(float(Fn[0]), float(Fn[1]), float(Fn[2]))
+    try:
+        renderer.ResetCameraClippingRange()
+    except Exception:
+        pass
+    try:
+        rw.Render()
+    except Exception:
+        pass
+    return True
+
+
 def _finish_plotter(plotter: Any) -> None:
     plotter.add_axes()
     try:

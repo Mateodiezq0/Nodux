@@ -978,6 +978,13 @@ class FtoolMainWindow(_QMainWindow):
         except Exception:
             pass
 
+        try:
+            from plot.pyvista_pestanas import install_zoom_toward_cursor
+
+            install_zoom_toward_cursor(self._plotter)
+        except Exception:
+            pass
+
         # ── Estado inicial ───────────────────────────────────────────────
         if precargar_ejemplo:
             self.statusBar().showMessage(
@@ -2691,7 +2698,7 @@ class FtoolMainWindow(_QMainWindow):
             pass
 
     def eventFilter(self, watched: Any, event: Any) -> bool:
-        """Suprimir en la vista 3D: VTK a veces no deja que el QShortcut de la ventana reciba la tecla."""
+        """Vista 3D: rueda con zoom hacia cursor (consume Wheel); Delete cuando VTK no entrega la tecla al shortcut."""
         iv = getattr(getattr(self, "_plotter", None), "interactor", None)
         if iv is None or watched is not iv:
             return False
@@ -2699,10 +2706,33 @@ class FtoolMainWindow(_QMainWindow):
             from PySide6.QtCore import QEvent
 
             _kp = QEvent.Type.KeyPress
+            _wh = QEvent.Type.Wheel
         else:
             from PyQt5.QtCore import QEvent
 
             _kp = QEvent.KeyPress
+            _wh = QEvent.Wheel
+        if event.type() == _wh:
+            ady = int(event.angleDelta().y())
+            if ady == 0:
+                return False
+            zoom_in = ady > 0
+            try:
+                if hasattr(event, "position"):
+                    p = event.position().toPoint()
+                else:
+                    p = event.pos()
+                x, y = int(p.x()), int(p.y())
+            except Exception:
+                return False
+            try:
+                from plot.pyvista_pestanas import ftool_zoom_wheel_toward_pixel
+
+                if ftool_zoom_wheel_toward_pixel(self._plotter, x, y, zoom_in):
+                    return True
+            except Exception:
+                return False
+            return False
         if event.type() != _kp:
             return False
         if event.key() == self._Qt.Key_Delete:
