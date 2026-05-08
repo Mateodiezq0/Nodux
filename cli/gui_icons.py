@@ -8,7 +8,7 @@ from typing import Callable, Dict
 
 _cache: Dict[str, object] = {}
 # Incrementar al cambiar dibujos para invalidar caché en caliente (reload de módulo).
-_ICONS_REVISION = 7
+_ICONS_REVISION = 11
 
 
 def _gui_modules():
@@ -92,7 +92,7 @@ def _icon_from_paint(size: int, painter_fn: Callable[..., None]) -> "QIcon":
 
 
 def ftool_engineering_icons() -> Dict[str, object]:
-    """Retorna dict con claves: node, bar, load, run, delete, new, open, save, view3d, viewtable."""
+    """Retorna dict con claves: node, bar, load, load_distributed, load_nodal, run, delete, new, open, save, undo, redo, view3d, viewtable."""
     global _cache
     if _cache and _cache.get("_revision") == _ICONS_REVISION:
         return {k: v for k, v in _cache.items() if k != "_revision"}
@@ -127,6 +127,46 @@ def ftool_engineering_icons() -> Dict[str, object]:
             ]
         )
         p.drawPolygon(arr)
+
+    def paint_load_distributed(p: QPainter, sz: int) -> None:
+        """Flechas hacia abajo + viga solo en las puntas; dibujo centrado en el icono."""
+        _solid = getattr(getattr(Qt, "PenStyle", object), "SolidLine", None)
+        if _solid is None:
+            _solid = Qt.SolidLine
+        _nobrush = getattr(getattr(Qt, "BrushStyle", object), "NoBrush", Qt.NoBrush)
+        beam_pen = QPen(QColor("#8a93a0"), max(1.0, sz / 16.0), _solid)
+        cx_mid = sz / 2.0
+        wt = max(0.45, sz * 0.022)
+        stem = sz * 0.22
+        head_h = max(2.5, sz * 0.15)
+        wh = max(1.55, sz * 0.062)
+        dx = min(sz * 0.16, max(2.2, (sz / 2.0 - 1.6) - wh))
+        pad_x = max(0.75, sz * 0.035)
+        y_top = sz / 2.0 - (stem + head_h) / 2.0
+        y1 = y_top + stem
+        y2 = y1 + head_h
+        x_left = max(1.5, cx_mid - dx - wh - pad_x)
+        x_right = min(sz - 1.5, cx_mid + dx + wh + pad_x)
+        stroke = QColor("#a87018")
+        fill = QColor("#e89a28")
+        p.setPen(QPen(stroke, max(1.0, sz / 22.0), _solid))
+        p.setBrush(QBrush(fill))
+        for cx in (cx_mid - dx, cx_mid, cx_mid + dx):
+            shaft = QPolygonF(
+                [
+                    QPointF(cx - wt, y_top),
+                    QPointF(cx + wt, y_top),
+                    QPointF(cx + wt, y1),
+                    QPointF(cx + wh, y1),
+                    QPointF(cx, y2),
+                    QPointF(cx - wh, y1),
+                    QPointF(cx - wt, y1),
+                ]
+            )
+            p.drawPolygon(shaft)
+        p.setPen(beam_pen)
+        p.setBrush(_nobrush)
+        p.drawLine(int(x_left), int(y2), int(x_right), int(y2))
 
     def paint_run(p: QPainter, sz: int) -> None:
         _nopen = getattr(getattr(Qt, "PenStyle", object), "NoPen", Qt.NoPen)
@@ -293,6 +333,7 @@ def ftool_engineering_icons() -> Dict[str, object]:
             "node": _icon_from_paint(s, paint_node),
             "bar": _icon_from_paint(s, paint_bar),
             "load": _icon_from_paint(s, paint_load),
+            "load_distributed": _icon_from_paint(s, paint_load_distributed),
             "load_nodal": _icon_from_paint(s, paint_load_nodal),
             "run": _icon_from_paint(s, paint_run),
             "delete": _icon_from_paint(s, paint_delete),

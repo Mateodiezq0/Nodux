@@ -391,7 +391,7 @@ class FtoolMainWindow(_QMainWindow):
         self._btn_nodo  = _mk_tb("node",       "Agregar nodo",                   self._dlg_add_node)
         self._btn_barra = _mk_tb("bar",        "Agregar barra",                  self._dlg_add_bar)
         self._btn_carga = _mk_tb("load",       "Carga puntual en barra",         self._dlg_add_load)
-        self._btn_carga_dist  = _mk_tb("load",       "Carga distribuida en barra",     self._dlg_add_distributed_load)
+        self._btn_carga_dist = _mk_tb("load_distributed", "Carga distribuida en barra", self._dlg_add_distributed_load)
         self._btn_carga_nodal = _mk_tb("load_nodal", "Carga nodal en nodo",            self._dlg_add_nodal_load)
         self._btn_del   = QToolButton()
         self._btn_del.setObjectName("btnIconDanger")
