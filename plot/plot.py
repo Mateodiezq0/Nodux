@@ -1075,6 +1075,33 @@ def _punto_carga_banda_superior_ipn(barra: Any, P_raw: np.ndarray, altura_perfil
     return P_raw + 0.5 * float(altura_perfil_h) * zl
 
 
+def _nodal_moment_rh_basis_plot(axis_idx: int):
+    ex = np.array([1.0, 0.0, 0.0], dtype=float)
+    ey = np.array([0.0, 1.0, 0.0], dtype=float)
+    ez = np.array([0.0, 0.0, 1.0], dtype=float)
+    if axis_idx == 0:
+        return ex, ey, ez
+    if axis_idx == 1:
+        return ey, ez, ex
+    return ez, ex, ey
+
+
+def _nodal_moment_arc_points_plot(
+    P: np.ndarray,
+    axis_idx: int,
+    M_component: float,
+    R_M: float,
+    delta_deg: float = 220.0,
+    n_pts: int = 42,
+) -> np.ndarray:
+    _, v, w = _nodal_moment_rh_basis_plot(axis_idx)
+    sign = 1.0 if float(M_component) >= 0.0 else -1.0
+    dtheta = np.radians(float(delta_deg) * sign)
+    thetas = np.linspace(0.0, dtheta, int(max(8, n_pts)), dtype=float)
+    ring = np.outer(np.cos(thetas), v) + np.outer(np.sin(thetas), w)
+    return np.asarray(P, dtype=float).reshape(1, 3) + float(R_M) * ring
+
+
 def _dibujo_vectores_fuerza_global(
     ax,
     barras: List,
@@ -1239,7 +1266,6 @@ def _dibujo_vectores_fuerza_global(
             if nodo is None:
                 continue
             P = np.array([float(nodo.x), float(nodo.y), float(nodo.z)], dtype=float)
-            # --- Fuerzas (fx, fy, fz) — flecha roja simple ---
             F = np.array(
                 [
                     float(getattr(cn, "fx", 0.0) or 0.0),
@@ -1248,24 +1274,36 @@ def _dibujo_vectores_fuerza_global(
                 ],
                 dtype=float,
             )
-            for i in range(3):
-                if abs(F[i]) <= tol:
-                    continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(F[i]))
-                tail = P - longitud_vector * u
+            fn = float(np.linalg.norm(F))
+            if fn > tol:
+                u_F = F / fn
+                L_F = float(longitud_vector * 1.08)
+                tail = P - L_F * u_F
+                ax.scatter(
+                    [P[0]],
+                    [P[1]],
+                    [P[2]],
+                    color=color_fuerza_nodal,
+                    s=float(max(36.0, longitud_vector * 1.1)),
+                    alpha=0.55,
+                    depthshade=True,
+                )
                 ax.quiver(
-                    tail[0], tail[1], tail[2],
-                    u[0], u[1], u[2],
-                    length=longitud_vector,
+                    tail[0],
+                    tail[1],
+                    tail[2],
+                    u_F[0],
+                    u_F[1],
+                    u_F[2],
+                    length=L_F,
                     normalize=True,
                     color=color_fuerza_nodal,
-                    linewidth=1.7,
-                    arrow_length_ratio=0.28,
+                    linewidth=1.85,
+                    arrow_length_ratio=0.26,
                 )
                 extras.append(P.copy())
                 extras.append(tail.copy())
-            # --- Momentos (mx, my, mz) — flecha doble cabeza violeta ---
+
             M = np.array(
                 [
                     float(getattr(cn, "mx", 0.0) or 0.0),
@@ -1274,35 +1312,56 @@ def _dibujo_vectores_fuerza_global(
                 ],
                 dtype=float,
             )
+            Mabs = np.abs(M)
+            Mmax = float(np.max(Mabs)) if np.any(Mabs > tol) else 1.0
+            R_base = float(longitud_vector * 0.52)
+            L_tip = float(max(longitud_vector * 0.14, 0.28))
             for i in range(3):
                 if abs(M[i]) <= tol:
                     continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(M[i]))
-                tail = P - longitud_vector * u
-                # Cabeza principal
+                R_M = R_base * (0.62 + 0.38 * abs(M[i]) / max(Mmax, 1e-18))
+                pts = _nodal_moment_arc_points_plot(P, i, float(M[i]), R_M)
+                if pts.shape[0] < 3:
+                    continue
+                ax.plot(
+                    pts[:, 0],
+                    pts[:, 1],
+                    pts[:, 2],
+                    color=color_momento_nodal,
+                    linewidth=2.1,
+                    solid_capstyle="round",
+                )
+                ts = (pts[1] - pts[0]) / max(float(np.linalg.norm(pts[1] - pts[0])), 1e-12)
+                te = (pts[-1] - pts[-2]) / max(float(np.linalg.norm(pts[-1] - pts[-2])), 1e-12)
+                u_out_s = -ts
                 ax.quiver(
-                    tail[0], tail[1], tail[2],
-                    u[0], u[1], u[2],
-                    length=longitud_vector,
+                    pts[0, 0] - u_out_s[0] * L_tip * 0.35,
+                    pts[0, 1] - u_out_s[1] * L_tip * 0.35,
+                    pts[0, 2] - u_out_s[2] * L_tip * 0.35,
+                    u_out_s[0],
+                    u_out_s[1],
+                    u_out_s[2],
+                    length=L_tip,
                     normalize=True,
                     color=color_momento_nodal,
-                    linewidth=1.7,
-                    arrow_length_ratio=0.28,
+                    linewidth=1.45,
+                    arrow_length_ratio=0.42,
                 )
-                # Segunda cabeza (a 0.18 del extremo) → doble cabeza convención vectores de par
-                tail2 = P - 0.82 * longitud_vector * u
                 ax.quiver(
-                    tail2[0], tail2[1], tail2[2],
-                    u[0], u[1], u[2],
-                    length=0.18 * longitud_vector,
+                    pts[-1, 0] - te[0] * L_tip * 0.35,
+                    pts[-1, 1] - te[1] * L_tip * 0.35,
+                    pts[-1, 2] - te[2] * L_tip * 0.35,
+                    te[0],
+                    te[1],
+                    te[2],
+                    length=L_tip,
                     normalize=True,
                     color=color_momento_nodal,
-                    linewidth=1.7,
-                    arrow_length_ratio=0.55,
+                    linewidth=1.45,
+                    arrow_length_ratio=0.42,
                 )
-                extras.append(P.copy())
-                extras.append(tail.copy())
+                for row in pts:
+                    extras.append(np.asarray(row, dtype=float).ravel()[:3].copy())
 
     return extras
 

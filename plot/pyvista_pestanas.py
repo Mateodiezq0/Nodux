@@ -619,6 +619,35 @@ def _add_ejes_locales_barras(
         plotter.add_mesh(pv.Line(c, c + zl * escala), color="blue", line_width=2)
 
 
+def _nodal_moment_rh_basis(axis_idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Eje del par e_i y base (v,w) en el plano del arco con v×w = e_i (mano derecha)."""
+    ex = np.array([1.0, 0.0, 0.0], dtype=float)
+    ey = np.array([0.0, 1.0, 0.0], dtype=float)
+    ez = np.array([0.0, 0.0, 1.0], dtype=float)
+    if axis_idx == 0:
+        return ex, ey, ez
+    if axis_idx == 1:
+        return ey, ez, ex
+    return ez, ex, ey
+
+
+def _nodal_moment_arc_points(
+    P: np.ndarray,
+    axis_idx: int,
+    M_component: float,
+    R_M: float,
+    delta_deg: float = 220.0,
+    n_pts: int = 42,
+) -> np.ndarray:
+    """Polilínea 3D del arco de momento (sentido según signo de M, RHR sobre eje axis_idx)."""
+    _, v, w = _nodal_moment_rh_basis(axis_idx)
+    sign = 1.0 if float(M_component) >= 0.0 else -1.0
+    dtheta = np.radians(float(delta_deg) * sign)
+    thetas = np.linspace(0.0, dtheta, int(max(8, n_pts)), dtype=float)
+    ring = np.outer(np.cos(thetas), v) + np.outer(np.sin(thetas), w)
+    return np.asarray(P, dtype=float).reshape(1, 3) + float(R_M) * ring
+
+
 def _add_fuerzas_globales(
     plotter: Any,
     barras: List[Any],
@@ -756,7 +785,6 @@ def _add_fuerzas_globales(
             if nodo is None:
                 continue
             P = np.array([float(nodo.x), float(nodo.y), float(nodo.z)], dtype=float)
-            # --- Fuerzas (fx, fy, fz) — tubo rojo más grueso ---
             F = np.array(
                 [
                     float(getattr(cn, "fx", 0.0) or 0.0),
@@ -765,16 +793,45 @@ def _add_fuerzas_globales(
                 ],
                 dtype=float,
             )
-            for i in range(3):
-                if abs(F[i]) <= tol:
-                    continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(F[i]))
-                tail = P - longitud_vector * u
-                ln = pv.Line(tail, P)
-                if ln.n_points > 0:
-                    plotter.add_mesh(ln.tube(radius=tube_r * 1.15), color=color_fuerza_nodal, smooth_shading=True)
-            # --- Momentos (mx, my, mz) — doble cuerpo + conos violetas ---
+            fn = float(np.linalg.norm(F))
+            if fn > tol:
+                u_F = F / fn
+                L_F = float(longitud_vector * 1.08)
+                tail = P - L_F * u_F
+                r_anchor = float(max(tube_r * 2.9, longitud_vector * 0.065, 0.42))
+                sph = pv.Sphere(
+                    radius=r_anchor,
+                    center=(float(P[0]), float(P[1]), float(P[2])),
+                    theta_resolution=14,
+                    phi_resolution=14,
+                )
+                plotter.add_mesh(
+                    sph,
+                    color=color_fuerza_nodal,
+                    opacity=0.42,
+                    smooth_shading=True,
+                    pickable=False,
+                )
+                ln_f = pv.Line(tail, P)
+                if ln_f.n_points > 0:
+                    plotter.add_mesh(
+                        ln_f.tube(radius=tube_r * 1.22),
+                        color=color_fuerza_nodal,
+                        smooth_shading=True,
+                        pickable=False,
+                    )
+                cone_hf = float(max(tube_r * 5.2, L_F * 0.12, 0.38))
+                cone_rf = float(max(tube_r * 2.35, cone_hf * 0.22))
+                c_cf = P - u_F * (0.5 * cone_hf)
+                mesh_f_cone = pv.Cone(
+                    center=c_cf.tolist(),
+                    direction=u_F.tolist(),
+                    height=cone_hf,
+                    radius=cone_rf,
+                )
+                if mesh_f_cone.n_points > 0:
+                    plotter.add_mesh(mesh_f_cone, color=color_fuerza_nodal, smooth_shading=True, pickable=False)
+
             Mv = np.array(
                 [
                     float(getattr(cn, "mx", 0.0) or 0.0),
@@ -783,33 +840,47 @@ def _add_fuerzas_globales(
                 ],
                 dtype=float,
             )
+            Mabs = np.abs(Mv)
+            Mmax = float(np.max(Mabs)) if np.any(Mabs > tol) else 1.0
+            R_base = float(longitud_vector * 0.52)
+            cone_h_m = float(max(tube_r * 4.6, 0.34))
+            cone_r_m = float(max(tube_r * 2.15, cone_h_m * 0.21))
             for i in range(3):
                 if abs(Mv[i]) <= tol:
                     continue
-                u = np.zeros(3, dtype=float)
-                u[i] = float(np.sign(Mv[i]))
-                tail = P - longitud_vector * u
-                # Cuerpo principal
-                ln = pv.Line(tail, P)
-                if ln.n_points > 0:
-                    plotter.add_mesh(ln.tube(radius=tube_r), color=color_momento_nodal, smooth_shading=True)
-                # Segunda cabeza (doble flecha a 0.18·L del extremo)
-                tail2 = P - 0.82 * longitud_vector * u
-                tip2 = P - (0.82 - 0.18) * longitud_vector * u
-                ln2 = pv.Line(tail2, tip2)
-                if ln2.n_points > 0:
-                    plotter.add_mesh(ln2.tube(radius=tube_r), color=color_momento_nodal, smooth_shading=True)
-                # Cono en la punta principal
-                cone_h = tube_r * 5.0
-                cone_center = P - u * cone_h * 0.5
-                cone = pv.Cone(center=cone_center.tolist(), direction=u.tolist(), height=cone_h, radius=tube_r * 2.5)
-                if cone.n_points > 0:
-                    plotter.add_mesh(cone, color=color_momento_nodal, smooth_shading=True)
-                # Cono en la segunda cabeza
-                cone2_center = tip2 - u * cone_h * 0.5
-                cone2 = pv.Cone(center=cone2_center.tolist(), direction=u.tolist(), height=cone_h, radius=tube_r * 2.5)
-                if cone2.n_points > 0:
-                    plotter.add_mesh(cone2, color=color_momento_nodal, smooth_shading=True)
+                R_M = R_base * (0.62 + 0.38 * abs(Mv[i]) / max(Mmax, 1e-18))
+                pts = _nodal_moment_arc_points(P, i, float(Mv[i]), R_M)
+                if pts.shape[0] < 3:
+                    continue
+                arc_ln = pv.lines_from_points(pts)
+                if arc_ln.n_points > 0:
+                    plotter.add_mesh(
+                        arc_ln.tube(radius=tube_r * 0.78),
+                        color=color_momento_nodal,
+                        smooth_shading=True,
+                        pickable=False,
+                    )
+                ts = (pts[1] - pts[0]) / max(float(np.linalg.norm(pts[1] - pts[0])), 1e-12)
+                te = (pts[-1] - pts[-2]) / max(float(np.linalg.norm(pts[-1] - pts[-2])), 1e-12)
+                u_out_s = -ts
+                c_s = pts[0] - u_out_s * (0.5 * cone_h_m)
+                co_s = pv.Cone(
+                    center=c_s.tolist(),
+                    direction=u_out_s.tolist(),
+                    height=cone_h_m,
+                    radius=cone_r_m,
+                )
+                if co_s.n_points > 0:
+                    plotter.add_mesh(co_s, color=color_momento_nodal, smooth_shading=True, pickable=False)
+                c_e = pts[-1] - te * (0.5 * cone_h_m)
+                co_e = pv.Cone(
+                    center=c_e.tolist(),
+                    direction=te.tolist(),
+                    height=cone_h_m,
+                    radius=cone_r_m,
+                )
+                if co_e.n_points > 0:
+                    plotter.add_mesh(co_e, color=color_momento_nodal, smooth_shading=True, pickable=False)
 
 
 def _tube_radius_from_ipn(ipn: pv.PolyData) -> Tuple[float, float]:
@@ -1381,7 +1452,8 @@ def build_ftool_legend_lines(view_key: str, escala: float) -> List[str]:
             "Cargas · vectores en sistema global",
             "Barra: negro = puntual (X,Y,Z)",
             "Barra: naranja = UDL (área sombreada + flechas iguales sobre el tramo)",
-            "Nodo: rojo = fuerza  ·  violeta = momento",
+            "Nodo: rojo = fuerza resultante + esfera en el nodo",
+            "Nodo: violeta = momento (arco en el plano del par)",
             ctrl,
         ]
     if view_key == "def":
