@@ -24,6 +24,7 @@ except ImportError:
     Patch = None  # type: ignore
     Axes3D = None  # type: ignore
     proj3d = None  # type: ignore
+    Poly3DCollection = None  # type: ignore
     MATPLOTLIB_AVAILABLE = False
 
 # Intentar importar Plotly
@@ -42,6 +43,10 @@ try:
     DASH_AVAILABLE = True
 except ImportError:
     DASH_AVAILABLE = False
+
+# Cargas en barra (matplotlib / convención compartida con PyVista en gui)
+_COLOR_CARGA_PUNTUAL_BAR = "#1a1a1a"
+_COLOR_CARGA_DISTRIB_BAR = "#d35400"
 
 # Importar funciones de carga
 def _cargar_datos():
@@ -1089,13 +1094,12 @@ def _dibujo_vectores_fuerza_global(
     En **cargas sobre barras**, la punta se muestra en la banda superior del IPN
     (desplazamiento ``h/2`` según ``z_local`` de la barra), no en el eje medio.
     """
-    color = "k"
     extras: List[np.ndarray] = []
 
     for barra in barras:
         for carga in getattr(barra, "cargas", []) or []:
             if getattr(carga, "is_distributed", False):
-                # Carga distribuida: dibujar peine de flechas entre inicio y fin
+                # UDL: franja rellena + contorno + flechas de igual longitud (coherente con PyVista)
                 F_int = np.asarray(
                     getattr(carga, "force_global_intensity", np.zeros(3)), dtype=float
                 ).ravel()[:3]
@@ -1113,25 +1117,83 @@ def _dibujo_vectores_fuerza_global(
                      float(getattr(carga, "y_f", p_start[1])),
                      float(getattr(carga, "z_f", p_start[2]))], dtype=float
                 )
-                n_arrows = max(3, min(9, int(np.linalg.norm(p_end - p_start) / (longitud_vector * 0.7)) + 3))
-                arrow_pts = [p_start + t * (p_end - p_start) for t in np.linspace(0, 1, n_arrows)]
-                tips = []
-                for pt in arrow_pts:
-                    P = _punto_carga_banda_superior_ipn(barra, pt, altura_perfil_h)
-                    tail = P - longitud_vector * F_dir
-                    ax.quiver(
-                        tail[0], tail[1], tail[2],
-                        F_dir[0], F_dir[1], F_dir[2],
-                        length=longitud_vector, normalize=True,
-                        color=color, linewidth=1.35, arrow_length_ratio=0.22,
+                span = float(np.linalg.norm(p_end - p_start))
+                chord = p_end - p_start
+                n_strip = int(
+                    max(12, min(40, int(span / max(longitud_vector * 0.28, 1e-9)) + 10))
+                )
+                ts = np.linspace(0.0, 1.0, n_strip + 1, dtype=float)
+                B = np.array(
+                    [
+                        _punto_carga_banda_superior_ipn(barra, p_start + t * chord, altura_perfil_h)
+                        for t in ts
+                    ],
+                    dtype=float,
+                )
+                H_udl = float(
+                    min(
+                        max(longitud_vector * 0.88, span * 0.12),
+                        span * 1.08,
+                        longitud_vector * 2.6,
                     )
-                    extras.append(P.copy())
-                    extras.append(tail.copy())
-                    tips.append(P.copy())
-                # Línea superior que une las puntas (indica carga continua)
-                if len(tips) >= 2:
-                    tp = np.array(tips, dtype=float)
-                    ax.plot(tp[:, 0], tp[:, 1], tp[:, 2], color=color, linewidth=1.2)
+                )
+                T = B - H_udl * F_dir.reshape(1, 3)
+                if MATPLOTLIB_AVAILABLE and Poly3DCollection is not None and n_strip >= 1:
+                    import matplotlib.colors as mcolors
+
+                    quads = [[B[i], B[i + 1], T[i + 1], T[i]] for i in range(n_strip)]
+                    fc = mcolors.to_rgba(_COLOR_CARGA_DISTRIB_BAR, alpha=0.38)
+                    coll = Poly3DCollection(
+                        quads,
+                        facecolors=fc,
+                        edgecolors="none",
+                        linewidths=0.0,
+                    )
+                    ax.add_collection3d(coll)
+                for poly in (B, T):
+                    if poly.shape[0] >= 2:
+                        ax.plot(
+                            poly[:, 0],
+                            poly[:, 1],
+                            poly[:, 2],
+                            color=_COLOR_CARGA_DISTRIB_BAR,
+                            linewidth=2.2,
+                            solid_capstyle="round",
+                        )
+                ax.plot(
+                    [B[0, 0], T[0, 0]],
+                    [B[0, 1], T[0, 1]],
+                    [B[0, 2], T[0, 2]],
+                    color=_COLOR_CARGA_DISTRIB_BAR,
+                    linewidth=2.2,
+                )
+                ax.plot(
+                    [B[-1, 0], T[-1, 0]],
+                    [B[-1, 1], T[-1, 1]],
+                    [B[-1, 2], T[-1, 2]],
+                    color=_COLOR_CARGA_DISTRIB_BAR,
+                    linewidth=2.2,
+                )
+                n_pts = B.shape[0]
+                step = max(1, n_strip // 7)
+                for i in range(0, n_pts, step):
+                    ax.quiver(
+                        T[i, 0],
+                        T[i, 1],
+                        T[i, 2],
+                        F_dir[0],
+                        F_dir[1],
+                        F_dir[2],
+                        length=H_udl,
+                        normalize=True,
+                        color=_COLOR_CARGA_DISTRIB_BAR,
+                        linewidth=1.1,
+                        arrow_length_ratio=0.22,
+                    )
+                    extras.append(B[i].copy())
+                    extras.append(T[i].copy())
+                for corner in (B[0], B[-1], T[0], T[-1]):
+                    extras.append(np.asarray(corner, dtype=float).ravel()[:3].copy())
             else:
                 F = _vector_global_carga_puntual(carga)
                 P_raw = np.array(
@@ -1158,7 +1220,7 @@ def _dibujo_vectores_fuerza_global(
                         u[2],
                         length=longitud_vector,
                         normalize=True,
-                        color=color,
+                        color=_COLOR_CARGA_PUNTUAL_BAR,
                         linewidth=1.35,
                         arrow_length_ratio=0.22,
                     )

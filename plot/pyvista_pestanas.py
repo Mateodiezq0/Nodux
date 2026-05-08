@@ -23,6 +23,8 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from plot.plot import (  # noqa: E402
+    _COLOR_CARGA_DISTRIB_BAR,
+    _COLOR_CARGA_PUNTUAL_BAR,
     _DIAG_COLOR_NEG,
     _DIAG_COLOR_POS,
     _DIAG_COLOR_ZERO,
@@ -647,22 +649,82 @@ def _add_fuerzas_globales(
                      float(getattr(carga, "y_f", p_start[1])),
                      float(getattr(carga, "z_f", p_start[2]))], dtype=float
                 )
-                n_arrows = max(3, min(9, int(np.linalg.norm(p_end - p_start) / max(longitud_vector * 0.7, 1e-9)) + 3))
-                arrow_pts = [p_start + t * (p_end - p_start) for t in np.linspace(0, 1, n_arrows)]
-                tips = []
-                for pt in arrow_pts:
-                    P = _punto_carga_banda_superior_ipn(barra, pt, h_perfil)
-                    tail = P - longitud_vector * F_dir
-                    ln = pv.Line(tail, P)
+                span = float(np.linalg.norm(p_end - p_start))
+                chord = p_end - p_start
+                n_strip = int(
+                    max(12, min(40, int(span / max(longitud_vector * 0.28, 1e-9)) + 10))
+                )
+                ts = np.linspace(0.0, 1.0, n_strip + 1, dtype=float)
+                B = np.array(
+                    [_punto_carga_banda_superior_ipn(barra, p_start + t * chord, h_perfil) for t in ts],
+                    dtype=float,
+                )
+                H_udl = float(
+                    min(
+                        max(longitud_vector * 0.88, span * 0.12),
+                        span * 1.08,
+                        longitud_vector * 2.6,
+                    )
+                )
+                T = B - H_udl * F_dir.reshape(1, 3)
+                n_pts = B.shape[0]
+                verts = np.vstack([B, T])
+                faces_l: List[int] = []
+                for i in range(n_strip):
+                    b0, b1 = i, i + 1
+                    t0, t1 = n_pts + i, n_pts + i + 1
+                    faces_l.extend([4, b0, b1, t1, t0])
+                faces_arr = np.array(faces_l, dtype=np.int64)
+                surf = pv.PolyData(verts, faces_arr)
+                if surf.n_points > 0:
+                    plotter.add_mesh(
+                        surf,
+                        color=_COLOR_CARGA_DISTRIB_BAR,
+                        opacity=0.38,
+                        smooth_shading=True,
+                        pickable=False,
+                    )
+                _lw = 2.6
+                for poly, lw in (
+                    (pv.lines_from_points(B), _lw),
+                    (pv.lines_from_points(T), _lw),
+                    (pv.Line(B[0], T[0]), _lw),
+                    (pv.Line(B[-1], T[-1]), _lw),
+                ):
+                    if poly.n_points > 0:
+                        plotter.add_mesh(
+                            poly,
+                            color=_COLOR_CARGA_DISTRIB_BAR,
+                            line_width=lw,
+                            pickable=False,
+                        )
+                step = max(1, n_strip // 7)
+                cone_h = float(max(tube_r * 5.0, H_udl * 0.14, 0.38))
+                cone_r = float(max(tube_r * 2.2, cone_h * 0.22))
+                for i in range(0, n_pts, step):
+                    ln = pv.Line(T[i], B[i])
                     if ln.n_points > 0:
-                        plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
-                    tips.append(P.copy())
-                # Linha superior conectando puntas
-                if len(tips) >= 2:
-                    tp = np.array(tips, dtype=float)
-                    ln_top = pv.lines_from_points(tp)
-                    if ln_top.n_points > 0:
-                        plotter.add_mesh(ln_top.tube(radius=tube_r * 0.7), color="black", smooth_shading=True)
+                        plotter.add_mesh(
+                            ln.tube(radius=tube_r * 0.55),
+                            color=_COLOR_CARGA_DISTRIB_BAR,
+                            smooth_shading=True,
+                            pickable=False,
+                        )
+                    tip = np.asarray(B[i], dtype=float).ravel()[:3]
+                    c_ctr = tip - F_dir * (0.5 * cone_h)
+                    cone = pv.Cone(
+                        center=c_ctr.tolist(),
+                        direction=F_dir.tolist(),
+                        height=cone_h,
+                        radius=cone_r,
+                    )
+                    if cone.n_points > 0:
+                        plotter.add_mesh(
+                            cone,
+                            color=_COLOR_CARGA_DISTRIB_BAR,
+                            smooth_shading=True,
+                            pickable=False,
+                        )
             else:
                 F = _vector_global_carga_puntual(carga)
                 P_raw = np.array(
@@ -678,7 +740,9 @@ def _add_fuerzas_globales(
                     tail = P - longitud_vector * u
                     ln = pv.Line(tail, P)
                     if ln.n_points > 0:
-                        plotter.add_mesh(ln.tube(radius=tube_r), color="black", smooth_shading=True)
+                        plotter.add_mesh(
+                            ln.tube(radius=tube_r), color=_COLOR_CARGA_PUNTUAL_BAR, smooth_shading=True
+                        )
 
     color_fuerza_nodal = "#c83232"
     color_momento_nodal = "#7a3fbf"
@@ -1313,7 +1377,13 @@ def build_ftool_legend_lines(view_key: str, escala: float) -> List[str]:
     if view_key == "geom":
         return ["Geometría · coordenadas en cm", ctrl]
     if view_key == "loads":
-        return ["Cargas · vectores en sistema global", ctrl]
+        return [
+            "Cargas · vectores en sistema global",
+            "Barra: negro = puntual (X,Y,Z)",
+            "Barra: naranja = UDL (área sombreada + flechas iguales sobre el tramo)",
+            "Nodo: rojo = fuerza  ·  violeta = momento",
+            ctrl,
+        ]
     if view_key == "def":
         return [
             "Deformada · desplazamientos en cm",
