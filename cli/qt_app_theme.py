@@ -902,6 +902,27 @@ def resultados_nav_button_stylesheet(t: AppColorTokens) -> str:
     )
 
 
+def resultados_sheet_bar_stylesheet(t: AppColorTokens) -> str:
+    """Barra de navegación de hojas (Anterior / posición / combo / Siguiente) en vista Resultados."""
+    return (
+        f"QWidget#resultadosSheetNav {{ background-color: {t.surface}; "
+        f"border-bottom: 1px solid {t.tab_pane_border}; }}"
+        f"QPushButton#resultadosSheetNavBtn {{ background-color: {t.accent_soft}; color: {t.selection_fg}; "
+        f"border: 1px solid {t.accent_soft_border}; border-radius: 4px; padding: 4px 12px; font-weight: 600; }}"
+        f"QPushButton#resultadosSheetNavBtn:hover {{ background-color: {t.combo_item_hover_bg}; "
+        f"border-color: {t.combo_hover_border}; }}"
+        f"QPushButton#resultadosSheetNavBtn:pressed {{ background-color: {t.selection_bg}; }}"
+        f"QPushButton#resultadosSheetNavBtn:disabled {{ background-color: {t.surface_alt}; color: {t.text_muted}; "
+        f"border-color: {t.groove}; }}"
+        f"QLabel#resultadosSheetNavLabel {{ color: {t.win_fg}; padding: 2px 6px; }}"
+        f"QComboBox#resultadosSheetNavCombo {{ background-color: {t.combo_bg}; color: {t.combo_fg}; "
+        f"border: 1px solid {t.combo_border}; border-radius: 4px; padding: 2px 8px; min-height: 22px; }}"
+        f"QComboBox#resultadosSheetNavCombo:hover {{ border-color: {t.combo_hover_border}; }}"
+        f"QComboBox#resultadosSheetNavCombo:disabled {{ background-color: {t.surface_alt}; color: {t.text_muted}; "
+        f"border-color: {t.groove}; }}"
+    )
+
+
 def splash_stylesheets(t: AppColorTokens) -> tuple[str, str, str]:
     """(dialog, title, message) QSS para splash de arranque."""
     dlg = (

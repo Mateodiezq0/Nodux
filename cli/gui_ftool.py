@@ -300,6 +300,7 @@ class FtoolMainWindow(_QMainWindow):
         self._F_internas: Optional[List[Any]] = None
         self._cached_resultados_dfs: Optional[Dict[str, Any]] = None
         self._resultados_sheet_key_order: List[str] = []
+        self._resultados_combo_updating: bool = False
         self._hover_state: Dict[str, Any] = {"hover": []}
         self._selected_bar_id: Optional[int] = None
         self._viz_bb: Any = None
@@ -525,34 +526,66 @@ class FtoolMainWindow(_QMainWindow):
         rl.addLayout(res_tb)
         self._tabs_resultados_sheets = QTabWidget()
         self._tabs_resultados_sheets.setDocumentMode(True)
-        self._tabs_resultados_sheets.setUsesScrollButtons(True)
         try:
-            self._tabs_resultados_sheets.tabBar().setExpanding(False)
+            self._tabs_resultados_sheets.tabBar().hide()
         except Exception:
             pass
-        nav_wrap = QWidget()
-        nav_lay = QHBoxLayout(nav_wrap)
-        nav_lay.setContentsMargins(0, 0, 0, 0)
-        nav_lay.setSpacing(2)
-        self._btn_res_tab_prev = QToolButton()
-        self._btn_res_tab_prev.setText("◀")
-        self._btn_res_tab_prev.setToolTip("Hoja anterior")
-        self._btn_res_tab_prev.setStyleSheet("")
+        self._resultados_sheet_nav = QWidget()
+        self._resultados_sheet_nav.setObjectName("resultadosSheetNav")
+        self._resultados_sheet_nav.setToolTip(
+            "Navegación entre hojas del último análisis.\n"
+            "Atajos: Ctrl+Re Pág (siguiente), Ctrl+Av Pág (anterior) — solo en vista Resultados."
+        )
+        nav_lay = QHBoxLayout(self._resultados_sheet_nav)
+        nav_lay.setContentsMargins(4, 4, 4, 4)
+        nav_lay.setSpacing(8)
+        self._btn_res_tab_prev = QPushButton("Anterior")
+        self._btn_res_tab_prev.setObjectName("resultadosSheetNavBtn")
+        self._btn_res_tab_prev.setMinimumHeight(28)
+        self._btn_res_tab_prev.setToolTip(
+            "Hoja anterior (Ctrl+Av Pág)\nSolo actúa en la vista Resultados."
+        )
         self._btn_res_tab_prev.clicked.connect(lambda: self._shift_resultados_tab(-1))
-        self._btn_res_tab_next = QToolButton()
-        self._btn_res_tab_next.setText("▶")
-        self._btn_res_tab_next.setToolTip("Hoja siguiente")
-        self._btn_res_tab_next.setStyleSheet("")
+        self._lbl_resultados_sheet_pos = QLabel("")
+        self._lbl_resultados_sheet_pos.setObjectName("resultadosSheetNavLabel")
+        self._lbl_resultados_sheet_pos.setMinimumWidth(180)
+        if backend == "PySide6":
+            self._lbl_resultados_sheet_pos.setSizePolicy(
+                QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed
+            )
+        else:
+            self._lbl_resultados_sheet_pos.setSizePolicy(
+                QSizePolicy.MinimumExpanding, QSizePolicy.Fixed
+            )
+        self._combo_resultados_sheet = QComboBox()
+        self._combo_resultados_sheet.setObjectName("resultadosSheetNavCombo")
+        self._combo_resultados_sheet.setMinimumHeight(28)
+        self._combo_resultados_sheet.setMinimumWidth(240)
+        if backend == "PySide6":
+            self._combo_resultados_sheet.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+        else:
+            self._combo_resultados_sheet.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._combo_resultados_sheet.setEditable(False)
+        self._combo_resultados_sheet.currentIndexChanged.connect(self._on_resultados_combo_sheet_changed)
+        try:
+            self._combo_resultados_sheet.showPopup.connect(self._style_resultados_sheet_combo)
+        except Exception:
+            pass
+        self._btn_res_tab_next = QPushButton("Siguiente")
+        self._btn_res_tab_next.setObjectName("resultadosSheetNavBtn")
+        self._btn_res_tab_next.setMinimumHeight(28)
+        self._btn_res_tab_next.setToolTip(
+            "Hoja siguiente (Ctrl+Re Pág)\nSolo actúa en la vista Resultados."
+        )
         self._btn_res_tab_next.clicked.connect(lambda: self._shift_resultados_tab(1))
         nav_lay.addWidget(self._btn_res_tab_prev)
+        nav_lay.addWidget(self._lbl_resultados_sheet_pos, 1)
+        nav_lay.addWidget(self._combo_resultados_sheet, 2)
         nav_lay.addWidget(self._btn_res_tab_next)
-        _tr = getattr(Qt, "TopRightCorner", None)
-        if _tr is None and hasattr(Qt, "Corner"):
-            _tr = Qt.Corner.TopRightCorner
-        if _tr is not None:
-            self._tabs_resultados_sheets.setCornerWidget(nav_wrap, _tr)
-        else:
-            self._tabs_resultados_sheets.setCornerWidget(nav_wrap)
+        self._tabs_resultados_sheets.currentChanged.connect(self._on_resultados_sheet_tab_changed)
+        rl.addWidget(self._resultados_sheet_nav)
         rl.addWidget(self._tabs_resultados_sheets, stretch=1)
 
         self._workspace_stack = QStackedWidget(central)
@@ -873,6 +906,19 @@ class FtoolMainWindow(_QMainWindow):
                 except Exception:
                     pass
             _t_vp_sc.activated.connect(self._on_shortcut_cycle_viewport_theme)
+
+            _res_pgdn = QShortcut(QKeySequence("Ctrl+PgDown"), self)
+            _res_pgup = QShortcut(QKeySequence("Ctrl+PgUp"), self)
+            for _sc in (_res_pgdn, _res_pgup):
+                try:
+                    _sc.setContext(Qt.ShortcutContext.WindowShortcut)
+                except AttributeError:
+                    try:
+                        _sc.setContext(Qt.WindowShortcut)
+                    except Exception:
+                        pass
+            _res_pgdn.activated.connect(self._on_shortcut_resultados_sheet_next)
+            _res_pgup.activated.connect(self._on_shortcut_resultados_sheet_prev)
         except Exception:
             pass
 
@@ -969,19 +1015,16 @@ class FtoolMainWindow(_QMainWindow):
         return get_app_color_tokens(self._viewport_theme_id)
 
     def _apply_full_ui_theme(self) -> None:
-        from cli.qt_app_theme import build_application_stylesheet, resultados_nav_button_stylesheet
+        from cli.qt_app_theme import build_application_stylesheet, resultados_sheet_bar_stylesheet
 
         tok = self._ui_color_tokens()
         self.setStyleSheet(build_application_stylesheet(tok))
         self._apply_application_popup_palette()
         self._style_combo_popup()
-        b1 = getattr(self, "_btn_res_tab_prev", None)
-        b2 = getattr(self, "_btn_res_tab_next", None)
-        nav_qss = resultados_nav_button_stylesheet(tok)
-        if b1 is not None:
-            b1.setStyleSheet(nav_qss)
-        if b2 is not None:
-            b2.setStyleSheet(nav_qss)
+        self._style_resultados_sheet_combo()
+        nav = getattr(self, "_resultados_sheet_nav", None)
+        if nav is not None:
+            nav.setStyleSheet(resultados_sheet_bar_stylesheet(tok))
 
     def _apply_application_popup_palette(self) -> None:
         """Paleta global para tooltips y menús (Fusion en Windows ignora a veces solo el QSS)."""
@@ -1024,6 +1067,59 @@ class FtoolMainWindow(_QMainWindow):
     def _style_combo_popup(self) -> None:
         """Lista del combo: sin marco negro del estilo nativo; colores coherentes con el tema."""
         combo = getattr(self, "_combo_vista", None)
+        if combo is None:
+            return
+        view = combo.view()
+        try:
+            from PySide6.QtWidgets import QFrame
+            from PySide6.QtGui import QPalette, QColor
+
+            _no = QFrame.Shape.NoFrame
+            _plain = QFrame.Shadow.Plain
+        except ImportError:
+            from PyQt5.QtWidgets import QFrame
+            from PyQt5.QtGui import QPalette, QColor
+
+            _no = QFrame.NoFrame
+            _plain = QFrame.Plain
+        try:
+            view.setFrameShape(_no)
+            view.setFrameShadow(_plain)
+            view.setLineWidth(0)
+        except Exception:
+            pass
+        t = self._ui_color_tokens()
+        view.setStyleSheet(
+            "QAbstractItemView { background-color: %s; color: %s; "
+            "selection-background-color: %s; selection-color: %s; "
+            "border: 1px solid %s; outline: none; }"
+            % (
+                t.combo_popup_bg,
+                t.combo_popup_fg,
+                t.selection_bg,
+                t.selection_fg,
+                t.combo_popup_border,
+            )
+        )
+        view.setAutoFillBackground(True)
+        vpal = view.palette()
+        _CR = getattr(QPalette, "ColorRole", QPalette)
+        vpal.setColor(_CR.Base, QColor(t.combo_popup_bg))
+        vpal.setColor(_CR.Text, QColor(t.combo_popup_fg))
+        vpal.setColor(_CR.Highlight, QColor(t.selection_bg))
+        vpal.setColor(_CR.HighlightedText, QColor(t.selection_fg))
+        view.setPalette(vpal)
+        pop = view.parentWidget()
+        if pop is not None:
+            pop.setAutoFillBackground(True)
+            pop.setStyleSheet(
+                "background-color: %s; border: 1px solid %s;"
+                % (t.combo_popup_bg, t.combo_popup_border)
+            )
+
+    def _style_resultados_sheet_combo(self) -> None:
+        """Lista desplegable del selector de hoja (misma paleta que el combo de vista)."""
+        combo = getattr(self, "_combo_resultados_sheet", None)
         if combo is None:
             return
         view = combo.view()
@@ -1163,6 +1259,9 @@ class FtoolMainWindow(_QMainWindow):
         dock = getattr(self, "_inspector_dock", None)
         if dock is not None:
             dock.show()
+        if index == self._IDX_WORKSPACE_RESULTADOS:
+            self._sync_resultados_sheet_nav()
+            self._focus_resultados_table()
 
     def _update_status_summary(self) -> None:
         """Actualiza el resumen del modelo en la barra de estado inferior."""
@@ -1194,10 +1293,94 @@ class FtoolMainWindow(_QMainWindow):
         n = tabs.count()
         if n <= 0:
             return
+        if n == 1 and tabs.tabText(0).strip() == "—":
+            return
         i = tabs.currentIndex()
         if i < 0:
             i = 0
-        tabs.setCurrentIndex((i + int(step)) % n)
+        j = max(0, min(n - 1, i + int(step)))
+        if j != i:
+            tabs.setCurrentIndex(j)
+
+    def _focus_resultados_table(self) -> None:
+        if self._workspace_stack.currentIndex() != self._IDX_WORKSPACE_RESULTADOS:
+            return
+        tw = self._tabs_resultados_sheets
+        w = tw.currentWidget()
+        if w is None:
+            return
+        if w.__class__.__name__ != "QTableWidget":
+            return
+        try:
+            w.setFocus()
+        except Exception:
+            pass
+
+    def _sync_resultados_sheet_nav(self) -> None:
+        tabs = self._tabs_resultados_sheets
+        combo = getattr(self, "_combo_resultados_sheet", None)
+        lbl = getattr(self, "_lbl_resultados_sheet_pos", None)
+        prev_b = getattr(self, "_btn_res_tab_prev", None)
+        next_b = getattr(self, "_btn_res_tab_next", None)
+        if combo is None or lbl is None:
+            return
+        n = tabs.count()
+        placeholder = n == 1 and tabs.tabText(0).strip() == "—"
+        if n <= 0 or placeholder:
+            lbl.setText("")
+            self._resultados_combo_updating = True
+            try:
+                combo.blockSignals(True)
+                combo.clear()
+            finally:
+                combo.blockSignals(False)
+                self._resultados_combo_updating = False
+            for b in (prev_b, next_b):
+                if b is not None:
+                    b.setEnabled(False)
+            combo.setEnabled(False)
+            return
+        ci = tabs.currentIndex()
+        if ci < 0:
+            ci = 0
+        self._resultados_combo_updating = True
+        try:
+            combo.blockSignals(True)
+            combo.clear()
+            for i in range(n):
+                combo.addItem(tabs.tabText(i))
+            combo.setCurrentIndex(ci)
+        finally:
+            combo.blockSignals(False)
+            self._resultados_combo_updating = False
+        title = tabs.tabText(ci)
+        lbl.setText(f"Hoja {ci + 1} de {n} — {title}")
+        if prev_b is not None:
+            prev_b.setEnabled(ci > 0)
+        if next_b is not None:
+            next_b.setEnabled(ci < n - 1)
+        combo.setEnabled(n > 1)
+
+    def _on_resultados_combo_sheet_changed(self, idx: int) -> None:
+        if self._resultados_combo_updating or idx < 0:
+            return
+        tabs = self._tabs_resultados_sheets
+        if tabs.currentIndex() != idx:
+            tabs.setCurrentIndex(idx)
+
+    def _on_resultados_sheet_tab_changed(self, _idx: int) -> None:
+        self._sync_resultados_sheet_nav()
+        self._focus_resultados_table()
+
+    def _on_shortcut_resultados_sheet_prev(self) -> None:
+        if self._workspace_stack.currentIndex() != self._IDX_WORKSPACE_RESULTADOS:
+            return
+        self._shift_resultados_tab(-1)
+
+    def _on_shortcut_resultados_sheet_next(self) -> None:
+        if self._workspace_stack.currentIndex() != self._IDX_WORKSPACE_RESULTADOS:
+            return
+        self._shift_resultados_tab(1)
 
     def _refresh_resultados_tables_ui(self) -> None:
         """Rellena las pestañas tipo Excel desde el último análisis."""
@@ -1265,6 +1448,7 @@ class FtoolMainWindow(_QMainWindow):
                 self._resultados_sheet_key_order.append(key)
         finally:
             tabs.blockSignals(False)
+            self._sync_resultados_sheet_nav()
 
     def _populate_resultados_qtable(self, tbl: Any, df: Any, sheet_key: str = "") -> None:
         import pandas as pd
@@ -1335,7 +1519,7 @@ class FtoolMainWindow(_QMainWindow):
                     self._QMessageBox.warning(
                         self,
                         "Exportar CSV",
-                        "Elegí una hoja en las pestañas de resultados (arriba de la tabla).",
+                        "Elegí una hoja con el selector «Hoja … de …» o el desplegable encima de la tabla.",
                     )
                     return
                 k = keys[idx]
