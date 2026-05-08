@@ -14,7 +14,7 @@ import sys
 import time
 import types
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 import numpy as np
 
@@ -774,22 +774,54 @@ def _diagram_segment_tolerance(
     return max(1e-15 * max(med, 1.0), min(bbox_tol, 1e-12 * max(med, 1.0)))
 
 
+def _plotter_set_background_from_style(
+    plotter: Any, viewport_style: Optional[Mapping[str, Any]]
+) -> None:
+    if viewport_style is None:
+        return
+    bg = str(viewport_style.get("background_color") or "#ffffff")
+    top = viewport_style.get("background_top")
+    if top:
+        try:
+            plotter.set_background(bg, top=str(top))
+        except TypeError:
+            plotter.set_background(bg)
+    else:
+        plotter.set_background(bg)
+
+
+def _ipn_mesh_face_edge_colors(
+    viewport_style: Optional[Mapping[str, Any]],
+) -> Tuple[str, str]:
+    if viewport_style is None:
+        return "#7fb3d5", "#1b4f72"
+    return (
+        str(viewport_style.get("mesh_color") or "#7fb3d5"),
+        str(viewport_style.get("mesh_edge_color") or "#1b4f72"),
+    )
+
+
 def _add_diagram_layers(
     plotter: Any,
     ipn: pv.PolyData,
     quads: List[Tuple[np.ndarray, str]],
     segs: List[Tuple[np.ndarray, np.ndarray, str]],
     refs: List[Tuple[np.ndarray, np.ndarray]],
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> None:
     _require_pyvista()
-    plotter.set_background("white")
+    if viewport_style is not None:
+        _plotter_set_background_from_style(plotter, viewport_style)
+    else:
+        plotter.set_background("white")
+    mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
-            color="#7fb3d5",
+            color=mc,
             opacity=0.9,
             show_edges=True,
-            edge_color="#1b4f72",
+            edge_color=mec,
             line_width=1,
         )
     for quad, col in quads:
@@ -831,6 +863,7 @@ def _populate_estructura(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> None:
     ipn = build_ipn_mesh(
         barras,
@@ -842,14 +875,18 @@ def _populate_estructura(
         profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     _require_pyvista()
-    plotter.set_background("white")
+    if viewport_style is not None:
+        _plotter_set_background_from_style(plotter, viewport_style)
+    else:
+        plotter.set_background("white")
+    mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
-            color="#7fb3d5",
+            color=mc,
             opacity=0.9,
             show_edges=True,
-            edge_color="#1b4f72",
+            edge_color=mec,
             line_width=1,
             label="Estructura",
         )
@@ -873,6 +910,7 @@ def _populate_fuerzas(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> None:
     ipn = build_ipn_mesh(
         barras,
@@ -885,14 +923,18 @@ def _populate_fuerzas(
     )
     h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
     _require_pyvista()
-    plotter.set_background("white")
+    if viewport_style is not None:
+        _plotter_set_background_from_style(plotter, viewport_style)
+    else:
+        plotter.set_background("white")
+    mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
-            color="#7fb3d5",
+            color=mc,
             opacity=0.9,
             show_edges=True,
-            edge_color="#1b4f72",
+            edge_color=mec,
             line_width=1,
         )
     _add_terna_global(plotter, longitud_vector)
@@ -965,12 +1007,16 @@ def _populate_deformada(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> None:
     g = _escala_intrinseca_deformacion(barras, nodos_dict, D)
     disp = float(escala_diagrama_slider) * g
     nd_def = _nodos_dict_proxy_deformado(nodos_dict, D, disp)
     _require_pyvista()
-    plotter.set_background("white")
+    if viewport_style is not None:
+        _plotter_set_background_from_style(plotter, viewport_style)
+    else:
+        plotter.set_background("white")
     for b in barras:
         c0, c1 = obtener_coordenadas_barra(b, nodos_dict)
         if c0 is None or c1 is None:
@@ -992,12 +1038,16 @@ def _populate_deformada(
         profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     if ipn.n_points > 0:
+        if viewport_style is not None:
+            d_mc, d_ec = _ipn_mesh_face_edge_colors(viewport_style)
+        else:
+            d_mc, d_ec = "#2980b9", "#1a5276"
         plotter.add_mesh(
             ipn,
-            color="#2980b9",
+            color=d_mc,
             opacity=0.92,
             show_edges=True,
-            edge_color="#1a5276",
+            edge_color=d_ec,
             line_width=1,
         )
     _add_terna_global(plotter, longitud_terna)
@@ -1020,6 +1070,7 @@ def _populate_corte(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -1031,7 +1082,7 @@ def _populate_corte(
         profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_corte_diagram_geometry(barras, nodos_dict, corte, escala_diagrama)
-    _add_diagram_layers(plotter, ipn, quads, segs, refs)
+    _add_diagram_layers(plotter, ipn, quads, segs, refs, viewport_style=viewport_style)
     if mostrar_ejes_locales:
         h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
         _add_ejes_locales_barras(plotter, barras, nodos_dict, max(h, b) * 0.8)
@@ -1049,6 +1100,7 @@ def _populate_my(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -1062,7 +1114,7 @@ def _populate_my(
     quads, segs, refs, _, hover = collect_my_diagram_geometry(
         barras, nodos_dict, ipn_dims, escala_seccion, escala_diagrama
     )
-    _add_diagram_layers(plotter, ipn, quads, segs, refs)
+    _add_diagram_layers(plotter, ipn, quads, segs, refs, viewport_style=viewport_style)
     if mostrar_ejes_locales:
         h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
         _add_ejes_locales_barras(plotter, barras, nodos_dict, max(h, b) * 0.8)
@@ -1080,6 +1132,7 @@ def _populate_mz(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -1097,7 +1150,7 @@ def _populate_mz(
         escala_seccion=escala_seccion,
         escala_diagrama_momento=escala_diagrama,
     )
-    _add_diagram_layers(plotter, ipn, quads, segs, refs)
+    _add_diagram_layers(plotter, ipn, quads, segs, refs, viewport_style=viewport_style)
     if mostrar_ejes_locales:
         h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
         _add_ejes_locales_barras(plotter, barras, nodos_dict, max(h, b) * 0.8)
@@ -1115,6 +1168,7 @@ def _populate_mx(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     ipn = build_ipn_mesh(
         barras,
@@ -1126,7 +1180,7 @@ def _populate_mx(
         profile_polygon_yz_per_bar_id=profile_polygon_yz_per_bar_id,
     )
     quads, segs, refs, _, hover = collect_mx_diagram_geometry(barras, nodos_dict, escala_diagrama)
-    _add_diagram_layers(plotter, ipn, quads, segs, refs)
+    _add_diagram_layers(plotter, ipn, quads, segs, refs, viewport_style=viewport_style)
     if mostrar_ejes_locales:
         h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
         _add_ejes_locales_barras(plotter, barras, nodos_dict, max(h, b) * 0.8)

@@ -37,543 +37,8 @@ from cli.section_props import compute_section, section_summary
 from cli.loader import build_estructura_from_spec
 from cli.pipeline import load_spec, solve_estructura
 
-# Paleta clara tipo Ftool: fondo gris claro, lienzo blanco, acento azul.
+# QSS global: ver ``cli/qt_app_theme.py`` (temas alineados al visor, regla 60-30-10).
 # Nota: no usar «QWidget { … }» global — en Windows pinta mal popups (combo, menús).
-_LIGHT_STYLESHEET = """
-QMainWindow {
-    font-family: "Segoe UI", "Roboto", "Inter", sans-serif;
-    font-size: 9pt;
-    color: #2c2c2c;
-    background-color: #f0f0f0;
-}
-QWidget#centralRoot {
-    font-family: "Segoe UI", "Roboto", "Inter", sans-serif;
-    font-size: 9pt;
-    color: #2c2c2c;
-    background-color: #f0f0f0;
-}
-QToolTip {
-    background-color: #fffff0;
-    color: #1a1a1a;
-    border: 1px solid #c8c8c8;
-    padding: 4px 6px;
-}
-QMessageBox { background-color: #ffffff; }
-QMessageBox QLabel { color: #1a1a1a; background-color: transparent; }
-
-QToolBar {
-    background-color: #e8e8e8;
-    border: none;
-    border-bottom: 1px solid #d0d0d0;
-    spacing: 2px;
-    padding: 2px 4px;
-}
-QToolBar::separator {
-    background: #c0c0c0;
-    width: 1px;
-    margin: 3px 4px;
-}
-QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 3px 6px;
-    font-size: 9pt;
-}
-QToolButton:hover {
-    background-color: #d8e8f8;
-    border-color: #a0c0e0;
-}
-QToolButton:pressed { background-color: #c0d8f0; }
-QToolButton#btnAnalyze {
-    background-color: #1a6fc4;
-    color: white;
-    border: 1px solid #1460aa;
-    border-radius: 3px;
-    padding: 4px 12px;
-    font-weight: 600;
-    font-size: 9pt;
-}
-QToolButton#btnAnalyze:hover {
-    background-color: #2280d8;
-    border-color: #0f58a0;
-}
-QToolButton#btnAnalyze:pressed { background-color: #145eb0; }
-QToolButton#btnIconDanger:hover {
-    background-color: #fce8e8;
-    border-color: #e0a0a0;
-}
-QToolButton#leftTool {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 3px;
-    margin: 1px;
-}
-QToolButton#leftTool:hover {
-    background-color: #d0e4f8;
-    border-color: #90c0e8;
-}
-QToolButton#leftTool:pressed { background-color: #b8d8f8; }
-QToolButton#wsToggle:checked {
-    background-color: #cce0f8;
-    border: 1px solid #6a9fd0;
-}
-
-QWidget#leftPanel {
-    background-color: #e0e0e0;
-    border-right: 1px solid #c8c8c8;
-}
-
-QLabel#mutedLabel { color: #6a6a6a; font-size: 9pt; }
-QLabel#scaleValue {
-    color: #2c2c2c;
-    font-weight: 600;
-    font-size: 9pt;
-    min-width: 3em;
-}
-QComboBox {
-    background-color: #ffffff;
-    color: #1a1a1a;
-    border: 1px solid #b8c0cc;
-    border-radius: 3px;
-    padding: 3px 8px;
-    min-width: 150px;
-    font-size: 9pt;
-}
-QComboBox:hover { border-color: #90b8e0; }
-QComboBox::drop-down { border: none; width: 20px; }
-QComboBox QAbstractItemView,
-QComboBox QListView {
-    background-color: #ffffff;
-    color: #1a1a1a;
-    selection-background-color: #cce0f8;
-    selection-color: #102040;
-    outline: none;
-    border: 1px solid #c8ccd4;
-    padding: 2px;
-}
-QComboBox QAbstractItemView::item {
-    padding: 4px 8px;
-    color: #1a1a1a;
-    border: none;
-}
-QComboBox QAbstractItemView::item:selected {
-    background-color: #cce0f8;
-    color: #102040;
-}
-QComboBox QAbstractItemView::item:hover {
-    background-color: #e8f2fc;
-    color: #102040;
-}
-QSlider::groove:horizontal {
-    border: none;
-    height: 4px;
-    background: #d0d0d0;
-    border-radius: 2px;
-}
-QSlider::handle:horizontal {
-    background: #1a6fc4;
-    border: none;
-    width: 12px;
-    margin: -4px 0;
-    border-radius: 6px;
-}
-QSlider::sub-page:horizontal {
-    background: #80b4e8;
-    border-radius: 2px;
-}
-QDockWidget {
-    border: 1px solid #d0d8e0;
-}
-QDockWidget::title {
-    background-color: #cfd9e6;
-    color: #12263d;
-    padding: 7px 10px;
-    font-weight: 700;
-    font-size: 10pt;
-    letter-spacing: 0.2px;
-    border: none;
-    border-bottom: 1px solid #b3c2d2;
-}
-QWidget#dockTitleBar {
-    background-color: #cfd9e6;
-    border-bottom: 1px solid #b3c2d2;
-}
-QLabel#dockTitleLabel {
-    color: #12263d;
-    font-size: 10pt;
-    font-weight: 700;
-    padding: 6px 10px;
-}
-QTabWidget::pane {
-    border: 1px solid #d4dae3;
-    background-color: #ffffff;
-    margin: 0;
-    padding: 0;
-}
-QTabBar::tab {
-    background-color: #d8e0ea;
-    color: #25364d;
-    padding: 5px 14px;
-    margin-right: 2px;
-    border: 1px solid #b9c5d3;
-    border-bottom: none;
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
-    font-size: 9pt;
-    font-weight: 600;
-}
-QTabBar::tab:selected {
-    background-color: #ffffff;
-    color: #115ca8;
-    border: 1px solid #d4dae3;
-    border-bottom: 2px solid #115ca8;
-}
-QTabBar::tab:hover:!selected { background-color: #c9d8ea; }
-QTableWidget {
-    background-color: white;
-    alternate-background-color: #f4f8fd;
-    color: #2c2c2c;
-    gridline-color: #e0e8f0;
-    font-size: 9pt;
-    selection-background-color: #cce0f8;
-    selection-color: #102040;
-    border: 1px solid #d0d8e0;
-}
-QTableWidget::item { padding: 1px 6px; border: none; }
-QTableWidget::item:selected {
-    background-color: #cce0f8;
-    color: #102040;
-}
-QHeaderView::section {
-    background-color: #d7e0eb;
-    color: #1f2f45;
-    padding: 4px 6px;
-    border: none;
-    border-right: 1px solid #c2ccd9;
-    border-bottom: 1px solid #c2ccd9;
-    font-size: 9pt;
-    font-weight: 600;
-}
-QMenuBar {
-    background-color: #ebebeb;
-    color: #2c2c2c;
-    padding: 1px 4px;
-    font-size: 9pt;
-    border-bottom: 1px solid #d0d0d0;
-}
-QMenuBar::item:selected { background-color: #d8e8f8; }
-QMenu {
-    background-color: #ffffff;
-    color: #1a1a1a;
-    border: 1px solid #c8ccd4;
-    font-size: 9pt;
-    padding: 4px;
-}
-QMenu::item {
-    padding: 5px 28px 5px 12px;
-    color: #1a1a1a;
-    background-color: transparent;
-}
-QMenu::item:selected {
-    background-color: #cce0f8;
-    color: #102040;
-}
-QMenu::separator {
-    height: 1px;
-    background: #d8dde5;
-    margin: 4px 8px;
-}
-QStatusBar {
-    background-color: #1a6fc4;
-    color: white;
-    border-top: 1px solid #145eaa;
-    font-size: 8pt;
-}
-QStatusBar QLabel { color: white; font-size: 8pt; padding: 0 6px; }
-QLabel#statusLegend {
-    color: rgba(255,255,255,0.85);
-    font-size: 8pt;
-    padding: 0px 8px;
-}
-QLabel#statusSummary {
-    color: white;
-    font-size: 8pt;
-    padding: 0px 8px;
-}
-QPushButton {
-    background-color: white;
-    color: #2c2c2c;
-    border: 1px solid #c0c8d0;
-    border-radius: 3px;
-    padding: 4px 12px;
-    font-size: 9pt;
-}
-QPushButton:hover {
-    background-color: #d8e8f8;
-    border-color: #90b8e0;
-}
-QPushButton:pressed { background-color: #c0d8f0; }
-QWidget#modelTableFooter {
-    background-color: #edf2f8;
-    border-top: 1px solid #c7d2df;
-}
-QPushButton#modelMiniAdd, QPushButton#materialMiniAdd {
-    background-color: #dbe9f8;
-    color: #124e90;
-    border: 1px solid #8eb0d4;
-    border-radius: 8px;
-    font-size: 14pt;
-    font-weight: 700;
-    padding: 0px 0px 5px 0px;
-    text-align: center;
-}
-QPushButton#modelMiniAdd:hover, QPushButton#materialMiniAdd:hover {
-    background-color: #cee1f6;
-    border-color: #6c96c5;
-}
-QPushButton#modelMiniAdd:pressed, QPushButton#materialMiniAdd:pressed { background-color: #bdd4ef; }
-QPushButton#modelMiniDel, QPushButton#materialMiniDel {
-    background-color: #eef1f5;
-    color: #4a5a70;
-    border: 1px solid #b7c2cf;
-    border-radius: 8px;
-    font-size: 14pt;
-    font-weight: 700;
-    padding: 0px 0px 5px 0px;
-    text-align: center;
-}
-QPushButton#modelMiniDel:hover, QPushButton#materialMiniDel:hover {
-    background-color: #e1e6ed;
-    border-color: #9ba9ba;
-}
-QPushButton#modelMiniDel:pressed, QPushButton#materialMiniDel:pressed { background-color: #d4dce6; }
-"""
-
-# Tema oscuro (alternativa al claro); incluye lista desplegable del QComboBox legible.
-_DARK_STYLESHEET = """
-QMainWindow {
-    font-family: "Segoe UI", "Roboto", "Inter", sans-serif;
-    font-size: 9pt;
-    color: #e8e9eb;
-    background-color: #2d2d30;
-}
-QWidget#centralRoot {
-    font-family: "Segoe UI", "Roboto", "Inter", sans-serif;
-    font-size: 9pt;
-    color: #e8e9eb;
-    background-color: #2d2d30;
-}
-QToolTip {
-    background-color: #3a3a3e;
-    color: #ececec;
-    border: 1px solid #5a5a60;
-    padding: 4px 6px;
-}
-QMessageBox { background-color: #3a3a3e; }
-QMessageBox QLabel { color: #ececec; background-color: transparent; }
-QToolBar {
-    background-color: #3c3c40;
-    border: none;
-    border-bottom: 1px solid #1e1e20;
-    spacing: 2px;
-    padding: 2px 4px;
-}
-QToolBar::separator { background: #555558; width: 1px; margin: 3px 4px; }
-QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    padding: 3px 6px;
-}
-QToolButton:hover { background-color: #45454a; border-color: #606068; }
-QToolButton:pressed { background-color: #353539; }
-QToolButton#btnAnalyze {
-    background-color: #2d6a45;
-    color: #f0fff4;
-    border: 1px solid #3a8a55;
-    border-radius: 3px;
-    padding: 4px 12px;
-    font-weight: 600;
-}
-QToolButton#btnAnalyze:hover { background-color: #358a52; border-color: #4a9a66; }
-QToolButton#btnAnalyze:pressed { background-color: #255535; }
-QToolButton#btnIconDanger:hover { background-color: #4a3030; border-color: #804040; }
-QToolButton#wsToggle:checked {
-    background-color: #4a5568;
-    border: 1px solid #6a7a90;
-}
-QLabel#mutedLabel { color: #9d9fa3; font-size: 9pt; }
-QLabel#scaleValue { color: #c4c7cc; font-weight: 600; font-size: 9pt; min-width: 3em; }
-QComboBox {
-    background-color: #3a3a3e;
-    color: #e8e9eb;
-    border: 1px solid #4e4e52;
-    border-radius: 3px;
-    padding: 3px 8px;
-    min-width: 150px;
-}
-QComboBox:hover { border-color: #606068; }
-QComboBox::drop-down { border: none; width: 20px; }
-QComboBox QAbstractItemView,
-QComboBox QListView {
-    background-color: #3a3a3e;
-    color: #ececec;
-    selection-background-color: #4a5568;
-    selection-color: #ffffff;
-    outline: none;
-    border: 1px solid #5a5a60;
-    padding: 2px;
-}
-QComboBox QAbstractItemView::item {
-    padding: 4px 8px;
-    color: #ececec;
-    border: none;
-}
-QComboBox QAbstractItemView::item:selected {
-    background-color: #4a5568;
-    color: #ffffff;
-}
-QComboBox QAbstractItemView::item:hover {
-    background-color: #4a5568;
-    color: #ffffff;
-}
-QSlider::groove:horizontal { border: none; height: 4px; background: #2a2a2d; border-radius: 2px; }
-QSlider::handle:horizontal { background: #6d7d8c; border: none; width: 12px; margin: -4px 0; border-radius: 6px; }
-QSlider::sub-page:horizontal { background: #5a6570; border-radius: 2px; }
-QDockWidget {
-    border: 1px solid #4a4a50;
-}
-QDockWidget::title {
-    background-color: #313841;
-    color: #e6ebf2;
-    padding: 7px 10px;
-    font-weight: 700;
-    font-size: 10pt;
-    letter-spacing: 0.2px;
-    border: none;
-    border-bottom: 1px solid #4f5b67;
-}
-QWidget#dockTitleBar {
-    background-color: #313841;
-    border-bottom: 1px solid #4f5b67;
-}
-QLabel#dockTitleLabel {
-    color: #e6ebf2;
-    font-size: 10pt;
-    font-weight: 700;
-    padding: 6px 10px;
-}
-QTabWidget::pane {
-    border: 1px solid #4a4a50;
-    background-color: #2d2d30;
-    margin: 0;
-}
-QTabBar::tab {
-    background-color: #40444b;
-    color: #d2d8e2;
-    padding: 5px 14px;
-    margin-right: 2px;
-    border: 1px solid #4a4a50;
-    border-bottom: none;
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
-}
-QTabBar::tab:selected {
-    background-color: #2d2d30;
-    color: #f2f4f8;
-    border: 1px solid #4a4a50;
-    border-bottom: 2px solid #7ea6d1;
-}
-QTabBar::tab:hover:!selected { background-color: #4a4f57; }
-QTableWidget {
-    background-color: #2d2d30;
-    alternate-background-color: #323236;
-    color: #e0e1e5;
-    gridline-color: #3f3f44;
-    selection-background-color: #4a5568;
-    selection-color: #f2f3f5;
-    border: 1px solid #3f3f42;
-}
-QTableWidget::item { padding: 1px 6px; border: none; }
-QTableWidget::item:selected { background-color: #4a5568; color: #f2f3f5; }
-QHeaderView::section {
-    background-color: #454a52;
-    color: #f0f3f8;
-    padding: 4px 6px;
-    border: none;
-    border-right: 1px solid #3f3f42;
-    border-bottom: 1px solid #3f3f42;
-    font-weight: 600;
-}
-QMenuBar { background-color: #2d2d30; color: #e8e9eb; padding: 1px 4px; border-bottom: 1px solid #3f3f42; }
-QMenuBar::item:selected { background-color: #3a3a3e; }
-QMenu {
-    background-color: #3a3a3e;
-    color: #ececec;
-    border: 1px solid #5a5a60;
-    padding: 4px;
-}
-QMenu::item {
-    padding: 5px 28px 5px 12px;
-    color: #ececec;
-    background-color: transparent;
-}
-QMenu::item:selected { background-color: #4a5568; color: #ffffff; }
-QMenu::separator {
-    height: 1px;
-    background: #5a5a60;
-    margin: 4px 8px;
-}
-QStatusBar { background-color: #252528; color: #c8c8cc; border-top: 1px solid #3f3f42; font-size: 8pt; }
-QStatusBar QLabel { color: #c8c8cc; font-size: 8pt; padding: 0 6px; }
-QLabel#statusLegend { color: #9a9da4; font-size: 8pt; padding: 0px 8px; }
-QLabel#statusSummary { color: #d0d0d4; font-size: 8pt; padding: 0px 8px; }
-QPushButton {
-    background-color: #3a3a3e;
-    color: #e8e9eb;
-    border: 1px solid #4e4e52;
-    border-radius: 3px;
-    padding: 4px 12px;
-}
-QPushButton:hover { background-color: #45454a; border-color: #606068; }
-QPushButton:pressed { background-color: #323236; }
-QWidget#modelTableFooter {
-    background-color: #30353d;
-    border-top: 1px solid #4b5560;
-}
-QPushButton#modelMiniAdd, QPushButton#materialMiniAdd {
-    background-color: #30465f;
-    color: #9cc4ee;
-    border: 1px solid #54759b;
-    border-radius: 8px;
-    font-size: 14pt;
-    font-weight: 700;
-    padding: 0px 0px 5px 0px;
-    text-align: center;
-}
-QPushButton#modelMiniAdd:hover, QPushButton#materialMiniAdd:hover {
-    background-color: #395273;
-    border-color: #6c8fb7;
-}
-QPushButton#modelMiniAdd:pressed, QPushButton#materialMiniAdd:pressed { background-color: #2a3e57; }
-QPushButton#modelMiniDel, QPushButton#materialMiniDel {
-    background-color: #3a4149;
-    color: #c5d1de;
-    border: 1px solid #616d79;
-    border-radius: 8px;
-    font-size: 14pt;
-    font-weight: 700;
-    padding: 0px 0px 5px 0px;
-    text-align: center;
-}
-QPushButton#modelMiniDel:hover, QPushButton#materialMiniDel:hover {
-    background-color: #444c55;
-    border-color: #758392;
-}
-QPushButton#modelMiniDel:pressed, QPushButton#materialMiniDel:pressed { background-color: #343b43; }
-"""
 
 
 def _default_spec() -> Dict[str, Any]:
@@ -825,7 +290,10 @@ class FtoolMainWindow(_QMainWindow):
             self._spec = _default_spec()
         self.setWindowTitle(titulo)
         self.resize(1280, 780)
-        self._ui_theme: str = "light"
+        from cli.viewport_theme import load_viewport_theme_id
+
+        self._viewport_theme_id: str = load_viewport_theme_id()
+        self._last_theme_cycle_ts: float = 0.0
         self._qt_backend = backend
         self._estructura: Optional[Estructura] = None
         self._solved = False
@@ -1069,22 +537,12 @@ class FtoolMainWindow(_QMainWindow):
         self._btn_res_tab_prev = QToolButton()
         self._btn_res_tab_prev.setText("◀")
         self._btn_res_tab_prev.setToolTip("Hoja anterior")
-        self._btn_res_tab_prev.setStyleSheet(
-            "QToolButton { background:#d8e9ff; color:#114a8b; border:1px solid #8fb3de; "
-            "border-radius:3px; padding:1px 6px; font-weight:700; } "
-            "QToolButton:hover { background:#bcd9fb; border-color:#6f9ed3; } "
-            "QToolButton:pressed { background:#a8cbf4; }"
-        )
+        self._btn_res_tab_prev.setStyleSheet("")
         self._btn_res_tab_prev.clicked.connect(lambda: self._shift_resultados_tab(-1))
         self._btn_res_tab_next = QToolButton()
         self._btn_res_tab_next.setText("▶")
         self._btn_res_tab_next.setToolTip("Hoja siguiente")
-        self._btn_res_tab_next.setStyleSheet(
-            "QToolButton { background:#d8e9ff; color:#114a8b; border:1px solid #8fb3de; "
-            "border-radius:3px; padding:1px 6px; font-weight:700; } "
-            "QToolButton:hover { background:#bcd9fb; border-color:#6f9ed3; } "
-            "QToolButton:pressed { background:#a8cbf4; }"
-        )
+        self._btn_res_tab_next.setStyleSheet("")
         self._btn_res_tab_next.clicked.connect(lambda: self._shift_resultados_tab(1))
         nav_lay.addWidget(self._btn_res_tab_prev)
         nav_lay.addWidget(self._btn_res_tab_next)
@@ -1320,7 +778,7 @@ class FtoolMainWindow(_QMainWindow):
 
         self._base_font = QFont("Segoe UI", 9)
         self.setFont(self._base_font)
-        self._apply_ftool_theme()
+        self._apply_full_ui_theme()
         _startup_progress_tick(startup_progress, 82, "Menús y atajos…")
 
         # ── Menús ────────────────────────────────────────────────────────
@@ -1356,9 +814,16 @@ class FtoolMainWindow(_QMainWindow):
         act_vres = menu_vista.addAction("Ir a Resultados (tablas)")
         act_vres.triggered.connect(self._show_resultados_tab)
         menu_vista.addSeparator()
-        sub_tema = menu_vista.addMenu("Tema")
-        sub_tema.addAction("Claro").triggered.connect(lambda: self._set_ui_theme("light"))
-        sub_tema.addAction("Oscuro").triggered.connect(lambda: self._set_ui_theme("dark"))
+        from cli.viewport_theme import list_themes
+
+        sub_vp = menu_vista.addMenu("Tema de la aplicación")
+        for _spec in list_themes():
+            _tid = _spec.id
+            sub_vp.addAction(_spec.label).triggered.connect(
+                lambda checked=False, tid=_tid: self._set_viewport_theme(tid)
+            )
+        sub_vp.addSeparator()
+        sub_vp.addAction("Siguiente (T)").triggered.connect(self._cycle_viewport_theme)
 
         # ── Atajos de teclado ────────────────────────────────────────────
         try:
@@ -1384,6 +849,35 @@ class FtoolMainWindow(_QMainWindow):
             _undo_sc.activated.connect(self._undo_model_change)
             _redo_sc = QShortcut(QKeySequence("Ctrl+Y"), self)
             _redo_sc.activated.connect(self._redo_model_change)
+
+            _del_sc = QShortcut(QKeySequence(Qt.Key_Delete), self)
+            try:
+                _del_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            except AttributeError:
+                try:
+                    _del_sc.setContext(Qt.WindowShortcut)
+                except Exception:
+                    pass
+            _del_sc.activated.connect(self._on_delete_selection)
+            try:
+                self._plotter.interactor.installEventFilter(self)
+            except Exception:
+                pass
+
+            _t_vp_sc = QShortcut(QKeySequence(Qt.Key_T), self)
+            try:
+                _t_vp_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            except AttributeError:
+                try:
+                    _t_vp_sc.setContext(Qt.WindowShortcut)
+                except Exception:
+                    pass
+            _t_vp_sc.activated.connect(self._on_shortcut_cycle_viewport_theme)
+        except Exception:
+            pass
+
+        try:
+            self._plotter.add_key_event("t", lambda: self._cycle_viewport_theme())
         except Exception:
             pass
 
@@ -1469,20 +963,25 @@ class FtoolMainWindow(_QMainWindow):
         self._redraw()
         self.statusBar().showMessage("Se rehizo el cambio (Ctrl+Y).")
 
-    def _set_ui_theme(self, name: str) -> None:
-        self._ui_theme = "dark" if str(name).lower() == "dark" else "light"
-        self.setStyleSheet(
-            _LIGHT_STYLESHEET if self._ui_theme == "light" else _DARK_STYLESHEET
-        )
+    def _ui_color_tokens(self):
+        from cli.qt_app_theme import get_app_color_tokens
+
+        return get_app_color_tokens(self._viewport_theme_id)
+
+    def _apply_full_ui_theme(self) -> None:
+        from cli.qt_app_theme import build_application_stylesheet, resultados_nav_button_stylesheet
+
+        tok = self._ui_color_tokens()
+        self.setStyleSheet(build_application_stylesheet(tok))
         self._apply_application_popup_palette()
         self._style_combo_popup()
-        try:
-            self._apply_viewport_background()
-        except Exception:
-            pass
-
-    def _apply_ftool_theme(self) -> None:
-        self._set_ui_theme(getattr(self, "_ui_theme", "light"))
+        b1 = getattr(self, "_btn_res_tab_prev", None)
+        b2 = getattr(self, "_btn_res_tab_next", None)
+        nav_qss = resultados_nav_button_stylesheet(tok)
+        if b1 is not None:
+            b1.setStyleSheet(nav_qss)
+        if b2 is not None:
+            b2.setStyleSheet(nav_qss)
 
     def _apply_application_popup_palette(self) -> None:
         """Paleta global para tooltips y menús (Fusion en Windows ignora a veces solo el QSS)."""
@@ -1496,40 +995,30 @@ class FtoolMainWindow(_QMainWindow):
         app = QApplication.instance()
         if app is None:
             return
+        t = self._ui_color_tokens()
         pal = app.palette()
         _CR = getattr(QPalette, "ColorRole", QPalette)
-        light = getattr(self, "_ui_theme", "light") == "light"
-        if light:
-            pal.setColor(_CR.ToolTipBase, QColor("#fffff0"))
-            pal.setColor(_CR.ToolTipText, QColor("#1a1a1a"))
-            pal.setColor(_CR.Base, QColor("#ffffff"))
-            pal.setColor(_CR.AlternateBase, QColor("#f4f8fd"))
-            pal.setColor(_CR.Text, QColor("#1a1a1a"))
-            pal.setColor(_CR.Window, QColor("#ffffff"))
-            pal.setColor(_CR.WindowText, QColor("#1a1a1a"))
-            pal.setColor(_CR.Button, QColor("#ffffff"))
-            pal.setColor(_CR.ButtonText, QColor("#1a1a1a"))
-            _mr = getattr(_CR, "Menu", None)
-            if _mr is not None:
-                pal.setColor(_mr, QColor("#ffffff"))
-            _mt = getattr(_CR, "MenuText", None)
-            if _mt is not None:
-                pal.setColor(_mt, QColor("#1a1a1a"))
-        else:
-            pal.setColor(_CR.ToolTipBase, QColor("#3a3a3e"))
-            pal.setColor(_CR.ToolTipText, QColor("#ececec"))
-            pal.setColor(_CR.Base, QColor("#3a3a3e"))
-            pal.setColor(_CR.Text, QColor("#ececec"))
-            pal.setColor(_CR.Window, QColor("#3a3a3e"))
-            pal.setColor(_CR.WindowText, QColor("#ececec"))
-            pal.setColor(_CR.Button, QColor("#3a3a3e"))
-            pal.setColor(_CR.ButtonText, QColor("#ececec"))
-            _mr = getattr(_CR, "Menu", None)
-            if _mr is not None:
-                pal.setColor(_mr, QColor("#3a3a3e"))
-            _mt = getattr(_CR, "MenuText", None)
-            if _mt is not None:
-                pal.setColor(_mt, QColor("#ececec"))
+        pal.setColor(_CR.ToolTipBase, QColor(t.tooltip_bg))
+        pal.setColor(_CR.ToolTipText, QColor(t.tooltip_fg))
+        pal.setColor(_CR.Base, QColor(t.combo_popup_bg))
+        pal.setColor(_CR.AlternateBase, QColor(t.surface_alt))
+        pal.setColor(_CR.Text, QColor(t.combo_popup_fg))
+        pal.setColor(_CR.Window, QColor(t.win_bg))
+        pal.setColor(_CR.WindowText, QColor(t.win_fg))
+        pal.setColor(_CR.Button, QColor(t.push_bg))
+        pal.setColor(_CR.ButtonText, QColor(t.push_fg))
+        _hl = getattr(_CR, "Highlight", None)
+        if _hl is not None:
+            pal.setColor(_hl, QColor(t.selection_bg))
+        _hlt = getattr(_CR, "HighlightedText", None)
+        if _hlt is not None:
+            pal.setColor(_hlt, QColor(t.selection_fg))
+        _mr = getattr(_CR, "Menu", None)
+        if _mr is not None:
+            pal.setColor(_mr, QColor(t.menu_bg))
+        _mt = getattr(_CR, "MenuText", None)
+        if _mt is not None:
+            pal.setColor(_mt, QColor(t.menu_fg))
         app.setPalette(pal)
 
     def _style_combo_popup(self) -> None:
@@ -1556,43 +1045,34 @@ class FtoolMainWindow(_QMainWindow):
             view.setLineWidth(0)
         except Exception:
             pass
-        if getattr(self, "_ui_theme", "light") == "dark":
-            view.setStyleSheet(
-                "QAbstractItemView { background-color: #3a3a3e; color: #ececec; "
-                "selection-background-color: #4a5568; selection-color: #ffffff; "
-                "border: 1px solid #5a5a60; outline: none; }"
+        t = self._ui_color_tokens()
+        view.setStyleSheet(
+            "QAbstractItemView { background-color: %s; color: %s; "
+            "selection-background-color: %s; selection-color: %s; "
+            "border: 1px solid %s; outline: none; }"
+            % (
+                t.combo_popup_bg,
+                t.combo_popup_fg,
+                t.selection_bg,
+                t.selection_fg,
+                t.combo_popup_border,
             )
-        else:
-            view.setStyleSheet(
-                "QAbstractItemView { background-color: #ffffff; color: #1a1a1a; "
-                "selection-background-color: #cce0f8; selection-color: #102040; "
-                "border: 1px solid #c8ccd4; outline: none; }"
-            )
+        )
         view.setAutoFillBackground(True)
         vpal = view.palette()
         _CR = getattr(QPalette, "ColorRole", QPalette)
-        if getattr(self, "_ui_theme", "light") == "light":
-            vpal.setColor(_CR.Base, QColor("#ffffff"))
-            vpal.setColor(_CR.Text, QColor("#1a1a1a"))
-            vpal.setColor(_CR.Highlight, QColor("#cce0f8"))
-            vpal.setColor(_CR.HighlightedText, QColor("#102040"))
-        else:
-            vpal.setColor(_CR.Base, QColor("#3a3a3e"))
-            vpal.setColor(_CR.Text, QColor("#ececec"))
-            vpal.setColor(_CR.Highlight, QColor("#4a5568"))
-            vpal.setColor(_CR.HighlightedText, QColor("#ffffff"))
+        vpal.setColor(_CR.Base, QColor(t.combo_popup_bg))
+        vpal.setColor(_CR.Text, QColor(t.combo_popup_fg))
+        vpal.setColor(_CR.Highlight, QColor(t.selection_bg))
+        vpal.setColor(_CR.HighlightedText, QColor(t.selection_fg))
         view.setPalette(vpal)
         pop = view.parentWidget()
         if pop is not None:
             pop.setAutoFillBackground(True)
-            if getattr(self, "_ui_theme", "light") == "light":
-                pop.setStyleSheet(
-                    "background-color: #ffffff; border: 1px solid #c8ccd4;"
-                )
-            else:
-                pop.setStyleSheet(
-                    "background-color: #3a3a3e; border: 1px solid #5a5a60;"
-                )
+            pop.setStyleSheet(
+                "background-color: %s; border: 1px solid %s;"
+                % (t.combo_popup_bg, t.combo_popup_border)
+            )
 
     def _set_workspace_page(self, idx: int) -> None:
         if idx not in (0, 1):
@@ -1615,18 +1095,49 @@ class FtoolMainWindow(_QMainWindow):
     def _show_workspace_3d(self) -> None:
         self._set_workspace_page(self._IDX_WORKSPACE_3D)
 
+    def _viewport_style_dict(self) -> Dict[str, Any]:
+        from cli.viewport_theme import get_theme, theme_to_style_dict
+
+        return theme_to_style_dict(get_theme(self._viewport_theme_id))
+
+    def _set_viewport_theme(self, theme_id: str, *, persist: bool = True) -> None:
+        from cli.viewport_theme import get_theme, save_viewport_theme_id
+
+        spec = get_theme(theme_id)
+        self._viewport_theme_id = spec.id
+        if persist:
+            save_viewport_theme_id(spec.id)
+        self.statusBar().showMessage(f"Tema: {spec.label}")
+        self._redraw()
+        self._apply_full_ui_theme()
+
+    def _cycle_viewport_theme(self) -> None:
+        import time
+
+        from cli.viewport_theme import get_theme, next_theme_id, save_viewport_theme_id
+
+        now = time.monotonic()
+        if now - float(getattr(self, "_last_theme_cycle_ts", 0.0)) < 0.2:
+            return
+        self._last_theme_cycle_ts = now
+        nid = next_theme_id(self._viewport_theme_id)
+        self._viewport_theme_id = nid
+        save_viewport_theme_id(nid)
+        sp = get_theme(nid)
+        self.statusBar().showMessage(f"Tema: {sp.label} (T: siguiente)")
+        self._redraw()
+        self._apply_full_ui_theme()
+
+    def _on_shortcut_cycle_viewport_theme(self) -> None:
+        if self._workspace_stack.currentIndex() != self._IDX_WORKSPACE_3D:
+            return
+        self._cycle_viewport_theme()
+
     def _apply_viewport_background(self) -> None:
-        """Fondo del visor 3D según tema."""
-        if getattr(self, "_ui_theme", "light") == "dark":
-            try:
-                self._plotter.set_background("#2a2d32", top="#3a4048")
-            except TypeError:
-                self._plotter.set_background("#2a2d32")
-        else:
-            try:
-                self._plotter.set_background("#f8f9fa", top="#ffffff")
-            except TypeError:
-                self._plotter.set_background("#f0f2f5")
+        """Fondo del visor 3D según el tema de color del visor (independiente del tema Qt)."""
+        from cli.viewport_theme import apply_style_to_plotter_background
+
+        apply_style_to_plotter_background(self._plotter, self._viewport_style_dict())
 
     def _apply_ftool_plotter_camera(self, prev_cam: Any) -> None:
         """
@@ -2918,6 +2429,26 @@ class FtoolMainWindow(_QMainWindow):
         except Exception:
             pass
 
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """Suprimir en la vista 3D: VTK a veces no deja que el QShortcut de la ventana reciba la tecla."""
+        iv = getattr(getattr(self, "_plotter", None), "interactor", None)
+        if iv is None or watched is not iv:
+            return False
+        if self._qt_backend == "PySide6":
+            from PySide6.QtCore import QEvent
+
+            _kp = QEvent.Type.KeyPress
+        else:
+            from PyQt5.QtCore import QEvent
+
+            _kp = QEvent.KeyPress
+        if event.type() != _kp:
+            return False
+        if event.key() == self._Qt.Key_Delete:
+            self._on_delete_selection()
+            return True
+        return False
+
     def _on_escape_deselect_bar(self) -> None:
         if self._selected_bar_id is None:
             return
@@ -3002,6 +2533,7 @@ class FtoolMainWindow(_QMainWindow):
         per_bar = self._ipn_dims_per_bar_from_spec()
         tube_bar = self._tube_outer_radius_per_bar_from_spec()
         profile_bar = self._profile_polygon_yz_per_bar_from_spec()
+        vp_style = self._viewport_style_dict()
 
         if key == "geom":
             _populate_estructura(
@@ -3016,6 +2548,7 @@ class FtoolMainWindow(_QMainWindow):
                 ipn_dims_per_bar_id=per_bar,
                 tube_outer_radius_per_bar_id=tube_bar,
                 profile_polygon_yz_per_bar_id=profile_bar,
+                viewport_style=vp_style,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -3034,6 +2567,7 @@ class FtoolMainWindow(_QMainWindow):
                 ipn_dims_per_bar_id=per_bar,
                 tube_outer_radius_per_bar_id=tube_bar,
                 profile_polygon_yz_per_bar_id=profile_bar,
+                viewport_style=vp_style,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -3052,6 +2586,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
                 add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
                 did_overlay = True
@@ -3092,6 +2627,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "vy":
                 self._hover_state["hover"] = _populate_corte(
@@ -3106,6 +2642,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "vz":
                 self._hover_state["hover"] = _populate_corte(
@@ -3120,6 +2657,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "nx":
                 self._hover_state["hover"] = _populate_corte(
@@ -3134,6 +2672,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "my":
                 self._hover_state["hover"] = _populate_my(
@@ -3147,6 +2686,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "mz":
                 self._hover_state["hover"] = _populate_mz(
@@ -3160,6 +2700,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             elif key == "mx":
                 self._hover_state["hover"] = _populate_mx(
@@ -3173,6 +2714,7 @@ class FtoolMainWindow(_QMainWindow):
                     ipn_dims_per_bar_id=per_bar,
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
+                    viewport_style=vp_style,
                 )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
             did_overlay = True
@@ -4005,11 +3547,15 @@ def run_ftool_gui(*, precargar_ejemplo: bool = False) -> None:
     else:
         from PyQt5.QtWidgets import QProgressBar
 
+    from cli.viewport_theme import load_viewport_theme_id
+    from cli.qt_app_theme import get_app_color_tokens, splash_stylesheets
+
+    _sp_tok = get_app_color_tokens(load_viewport_theme_id())
+    _sp_dlg, _sp_title, _sp_msg = splash_stylesheets(_sp_tok)
+
     _splash = QDialog()
     _splash.setObjectName("reticularSplash")
-    _splash.setStyleSheet(
-        "QDialog#reticularSplash { background-color: #f4f4f4; border: 2px solid #1a6fc4; border-radius: 8px; }"
-    )
+    _splash.setStyleSheet(_sp_dlg)
     _splash.setWindowIcon(_app_icon)
     _splash.setWindowTitle("Reticular")
     _TS = getattr(Qt, "WindowType", Qt)
@@ -4021,9 +3567,9 @@ def run_ftool_gui(*, precargar_ejemplo: bool = False) -> None:
     _sl.setContentsMargins(22, 18, 22, 18)
     _sl.setSpacing(10)
     _lbl_title = QLabel("Reticular")
-    _lbl_title.setStyleSheet("font-weight: 600; font-size: 15pt; color: #1a6fc4;")
+    _lbl_title.setStyleSheet(f"font-weight: 600; font-size: 15pt; {_sp_title}")
     _lbl_msg = QLabel("Cargando…")
-    _lbl_msg.setStyleSheet("color: #404040;")
+    _lbl_msg.setStyleSheet(_sp_msg)
     _bar = QProgressBar()
     _bar.setRange(0, 100)
     _bar.setValue(0)
