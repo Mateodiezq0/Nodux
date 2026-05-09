@@ -137,14 +137,14 @@ def draw_material_preview(
             ax_v.text(
                 0.5,
                 0.5,
-                "IPN: valores inválidos",
+                "Perfil: valores inválidos",
                 ha="center",
                 va="center",
                 transform=ax_v.transAxes,
                 color="#a93226",
             )
         ax_v.set_aspect("equal", adjustable="box")
-    ax_v.set_title("Vista 3D (perfil IPN)", fontsize=9, color="#2c3e50")
+    ax_v.set_title("Vista 3D (perfil)", fontsize=9, color="#2c3e50")
 
     fig.subplots_adjust(hspace=0.35, left=0.12, right=0.95, top=0.93, bottom=0.08)
 

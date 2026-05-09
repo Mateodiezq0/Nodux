@@ -63,6 +63,85 @@ def _default_spec() -> Dict[str, Any]:
 
 
 IPN_DEFAULT = {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
+IPN_CATALOG_XLSX = _ROOT / "Tabla_Perfiles_IPN_Actualizada.xlsx"
+_IPN_CATALOG_CACHE: Optional[List[Dict[str, Any]]] = None
+
+
+def _catalog_designation_text(value: Any) -> str:
+    try:
+        f = float(value)
+        if f.is_integer():
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _catalog_column_key(label: Any) -> str:
+    s = str(label).strip().lower()
+    s = s.replace("designación", "designacion")
+    s = s.replace(" ", "").replace("_", "")
+    if s.startswith("designacion"):
+        return "designation"
+    if s.startswith("d(") or s == "d":
+        return "d"
+    if s.startswith("bf"):
+        return "bf"
+    if s.startswith("tf"):
+        return "tf"
+    if s.startswith("hw"):
+        return "hw"
+    if s.startswith("tw"):
+        return "tw"
+    if s.startswith("a(") or s == "a":
+        return "A"
+    if s.startswith("iz") or s.startswith("i_z") or "iz" in s:
+        return "I_z"
+    if s.startswith("iy") or s.startswith("i_y") or "iy" in s:
+        return "I_y"
+    if s.startswith("j(") or s == "j":
+        return "J"
+    return ""
+
+
+def _load_ipn_catalog() -> List[Dict[str, Any]]:
+    """Lee la tabla IPN del Excel del proyecto; devuelve [] si no está disponible."""
+    global _IPN_CATALOG_CACHE
+    if _IPN_CATALOG_CACHE is not None:
+        return list(_IPN_CATALOG_CACHE)
+    out: List[Dict[str, Any]] = []
+    if not IPN_CATALOG_XLSX.exists():
+        _IPN_CATALOG_CACHE = out
+        return out
+    try:
+        import pandas as pd
+
+        df = pd.read_excel(IPN_CATALOG_XLSX)
+        col_by_key: Dict[str, Any] = {}
+        for col in df.columns:
+            key = _catalog_column_key(col)
+            if key:
+                col_by_key[key] = col
+        required = ("designation", "d", "bf", "tf", "hw", "tw", "A", "I_z", "I_y", "J")
+        if not all(k in col_by_key for k in required):
+            _IPN_CATALOG_CACHE = out
+            return out
+        for _, row in df.iterrows():
+            try:
+                item: Dict[str, Any] = {
+                    "family": "IPN",
+                    "designation": _catalog_designation_text(row[col_by_key["designation"]]),
+                }
+                for key in required[1:]:
+                    item[key] = float(row[col_by_key[key]])
+                if item["designation"]:
+                    out.append(item)
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        out = []
+    _IPN_CATALOG_CACHE = out
+    return list(out)
 
 
 def _section_type_lower(sec: Any) -> str:
@@ -1826,7 +1905,13 @@ class FtoolMainWindow(_QMainWindow):
                 r = self._tbl_materials.rowCount()
                 self._tbl_materials.insertRow(r)
                 sec = raw.get("section")
-                tipo = section_summary(sec) if sec else "Manual"
+                catalog = raw.get("catalog") if isinstance(raw.get("catalog"), dict) else {}
+                if sec:
+                    tipo = section_summary(sec)
+                elif catalog.get("family") and catalog.get("designation"):
+                    tipo = f"{catalog.get('family')} {catalog.get('designation')}"
+                else:
+                    tipo = "Manual"
                 nu = raw.get("nu")
                 nu_s = "" if nu is None else str(nu)
                 ga = raw.get("gamma")
@@ -2037,15 +2122,29 @@ class FtoolMainWindow(_QMainWindow):
         s_ga.setValue(float(existing.get("gamma", 0.00785)))
         form.addRow("γ peso específico (Tn/cm³)", s_ga)
 
-        chk_viz_global = self._QCheckBox("Vista 3D: usar dimensiones globales del visor (perfil IPN)")
+        chk_viz_global = self._QCheckBox("Vista 3D: usar dimensiones globales del visor (perfil)")
         ex_vz = existing.get("viz")
         ex_vz = ex_vz if isinstance(ex_vz, dict) else {}
+        ex_catalog = existing.get("catalog")
+        ex_catalog = ex_catalog if isinstance(ex_catalog, dict) else {}
         has_full_viz = all(k in ex_vz for k in ("h", "b", "tw", "tf"))
         if "use_global" in ex_vz:
             use_global_viz = bool(ex_vz["use_global"])
         else:
             use_global_viz = not has_full_viz
         chk_viz_global.setChecked(use_global_viz)
+        profile_family = self._QComboBox()
+        for _fam in ("IPN", "UPN", "Perfil L"):
+            profile_family.addItem(_fam, _fam)
+        profile_design = self._QComboBox()
+        ipn_catalog = _load_ipn_catalog()
+        saved_family = str(ex_catalog.get("family") or ex_vz.get("family") or "IPN")
+        saved_designation = str(
+            ex_catalog.get("designation") or ex_vz.get("designation") or ""
+        ).strip()
+        ix_family = profile_family.findData(saved_family)
+        if ix_family >= 0:
+            profile_family.setCurrentIndex(ix_family)
         vh = self._QDoubleSpinBox()
         vh.setRange(1e-6, 1e6)
         vh.setDecimals(4)
@@ -2054,27 +2153,72 @@ class FtoolMainWindow(_QMainWindow):
         vb.setRange(1e-6, 1e6)
         vb.setDecimals(4)
         vb.setValue(float(ex_vz.get("b", IPN_DEFAULT["b"])))
-        vtw = self._QDoubleSpinBox()
-        vtw.setRange(1e-6, 1e6)
-        vtw.setDecimals(4)
-        vtw.setValue(float(ex_vz.get("tw", IPN_DEFAULT["tw"])))
         vtf = self._QDoubleSpinBox()
         vtf.setRange(1e-6, 1e6)
         vtf.setDecimals(4)
         vtf.setValue(float(ex_vz.get("tf", IPN_DEFAULT["tf"])))
+        vhw = self._QDoubleSpinBox()
+        vhw.setRange(1e-6, 1e6)
+        vhw.setDecimals(4)
+        vhw.setValue(float(ex_vz.get("hw", max(vh.value() - 2.0 * vtf.value(), 1e-6))))
+        vtw = self._QDoubleSpinBox()
+        vtw.setRange(1e-6, 1e6)
+        vtw.setDecimals(4)
+        vtw.setValue(float(ex_vz.get("tw", IPN_DEFAULT["tw"])))
         viz_box = W()
         fv = self._QFormLayout(viz_box)
-        fv.addRow("h (cm)", vh)
-        fv.addRow("b (cm)", vb)
-        fv.addRow("tw alma (cm)", vtw)
+        fv.addRow("Tipo de perfil", profile_family)
+        fv.addRow("Designación", profile_design)
+        fv.addRow("d (cm)", vh)
+        fv.addRow("bf (cm)", vb)
         fv.addRow("tf patín (cm)", vtf)
+        fv.addRow("hw alma (cm)", vhw)
+        fv.addRow("tw alma (cm)", vtw)
         form.addRow("", chk_viz_global)
-        form.addRow("Perfil IPN en vista", viz_box)
+        form.addRow("Perfil en vista", viz_box)
+
+        def _current_catalog_profile() -> Optional[Dict[str, Any]]:
+            data = profile_design.currentData()
+            return data if isinstance(data, dict) else None
+
+        def _apply_catalog_dims(row: Optional[Dict[str, Any]]) -> None:
+            if not row:
+                return
+            vh.setValue(float(row["d"]))
+            vb.setValue(float(row["bf"]))
+            vtf.setValue(float(row["tf"]))
+            vhw.setValue(float(row["hw"]))
+            vtw.setValue(float(row["tw"]))
+
+        def _populate_profile_designations() -> None:
+            fam = str(profile_family.currentData() or profile_family.currentText())
+            profile_design.blockSignals(True)
+            profile_design.clear()
+            if fam == "IPN":
+                profile_design.addItem("Seleccionar perfil IPN…", None)
+                for row in ipn_catalog:
+                    profile_design.addItem(row["designation"], row)
+                if saved_designation:
+                    ix = profile_design.findText(saved_designation)
+                    if ix >= 0:
+                        profile_design.setCurrentIndex(ix)
+            else:
+                profile_design.addItem("Tabla pendiente", None)
+            profile_design.blockSignals(False)
+            _apply_catalog_dims(_current_catalog_profile())
 
         def _sync_viz_spin_enabled(checked: bool) -> None:
-            for w in (vh, vb, vtw, vtf):
-                w.setEnabled(not checked)
+            has_catalog = _current_catalog_profile() is not None
+            for w in (profile_family, profile_design):
+                w.setEnabled(True)
+            for w in (vh, vb, vtf, vhw, vtw):
+                w.setEnabled(not checked and not has_catalog)
 
+        profile_family.currentIndexChanged.connect(_populate_profile_designations)
+        profile_design.currentIndexChanged.connect(
+            lambda *_: (_apply_catalog_dims(_current_catalog_profile()), _sync_viz_spin_enabled(chk_viz_global.isChecked()))
+        )
+        _populate_profile_designations()
         chk_viz_global.toggled.connect(_sync_viz_spin_enabled)
         _sync_viz_spin_enabled(chk_viz_global.isChecked())
 
@@ -2210,6 +2354,23 @@ class FtoolMainWindow(_QMainWindow):
         fm.addRow("G (Tn/cm²); si 0 se usa ν", sG)
         vm.addWidget(fw_man)
         vm.addStretch(0)
+
+        def _apply_catalog_to_material_fields(*_: Any) -> None:
+            row = _current_catalog_profile()
+            if not row:
+                return
+            mode.setCurrentIndex(1)
+            sA.setValue(float(row["A"]))
+            sIz.setValue(float(row["I_z"]))
+            sIy.setValue(float(row["I_y"]))
+            sJ.setValue(float(row["J"]))
+            _apply_catalog_dims(row)
+            _sync_viz_spin_enabled(chk_viz_global.isChecked())
+
+        profile_design.currentIndexChanged.connect(_apply_catalog_to_material_fields)
+        profile_family.currentIndexChanged.connect(_apply_catalog_to_material_fields)
+        if _current_catalog_profile() is not None:
+            _apply_catalog_to_material_fields()
 
         stack.addWidget(page_p)
         stack.addWidget(page_m)
@@ -2431,8 +2592,9 @@ class FtoolMainWindow(_QMainWindow):
                 sto,
                 vh,
                 vb,
-                vtw,
                 vtf,
+                vhw,
+                vtw,
                 sA,
                 sIy,
                 sIz,
@@ -2441,6 +2603,8 @@ class FtoolMainWindow(_QMainWindow):
             for _sp in _spin_refresh:
                 _sp.valueChanged.connect(_refresh_material_preview)
             sec_type.currentIndexChanged.connect(_refresh_material_preview)
+            profile_family.currentIndexChanged.connect(_refresh_material_preview)
+            profile_design.currentIndexChanged.connect(_refresh_material_preview)
             mode.currentIndexChanged.connect(_refresh_material_preview)
             chk_viz_global.toggled.connect(_refresh_material_preview)
             _refresh_material_preview()
@@ -2467,6 +2631,10 @@ class FtoolMainWindow(_QMainWindow):
             )
             if not _msg_is_yes(self._QMessageBox, r):
                 return
+
+        selected_catalog_profile = _current_catalog_profile()
+        if selected_catalog_profile is not None:
+            _apply_catalog_to_material_fields()
 
         entry: Dict[str, Any] = {"E": s_e.value(), "gamma": s_ga.value()}
 
@@ -2506,10 +2674,21 @@ class FtoolMainWindow(_QMainWindow):
                 return
         else:
             entry.pop("section", None)
-            entry["A"] = sA.value()
-            entry["I_y"] = sIy.value()
-            entry["I_z"] = sIz.value()
-            entry["J"] = sJ.value()
+            if selected_catalog_profile is not None:
+                entry["catalog"] = {
+                    "family": "IPN",
+                    "designation": str(selected_catalog_profile["designation"]),
+                }
+                entry["A"] = float(selected_catalog_profile["A"])
+                entry["I_y"] = float(selected_catalog_profile["I_y"])
+                entry["I_z"] = float(selected_catalog_profile["I_z"])
+                entry["J"] = float(selected_catalog_profile["J"])
+            else:
+                entry.pop("catalog", None)
+                entry["A"] = sA.value()
+                entry["I_y"] = sIy.value()
+                entry["I_z"] = sIz.value()
+                entry["J"] = sJ.value()
             Gv = sG.value()
             if Gv > 0:
                 entry["G"] = Gv
@@ -2531,10 +2710,15 @@ class FtoolMainWindow(_QMainWindow):
         else:
             entry["viz"] = {
                 "use_global": False,
+                "family": str(profile_family.currentData() or profile_family.currentText()),
+                "designation": str(selected_catalog_profile["designation"])
+                if selected_catalog_profile is not None
+                else "",
                 "h": vh.value(),
                 "b": vb.value(),
                 "tw": vtw.value(),
                 "tf": vtf.value(),
+                "hw": vhw.value(),
             }
 
         self._push_undo_snapshot()
