@@ -26,6 +26,8 @@ class ViewportThemeSpec:
     background_top: Optional[str]
     mesh_color: str
     mesh_edge_color: str
+    # Grosor de aristas del perfil IPN (solo si se define; por defecto 1 en PyVista).
+    mesh_edge_line_width: Optional[float] = None
 
 
 _THEMES: Dict[str, ViewportThemeSpec] = {
@@ -34,8 +36,11 @@ _THEMES: Dict[str, ViewportThemeSpec] = {
         label="Oscuro (predeterminado)",
         background_color="#1a1a1c",
         background_top="#2a2d32",
-        mesh_color="#d8dde6",
-        mesh_edge_color="#a8b0c0",
+        # Perfil IPN: gris claro (menos “blanco” que #d8dde6) para no cansar la vista sobre fondo oscuro.
+        mesh_color="#aeb4bf",
+        # Aristas más oscuras y un poco más gruesas que en otros temas para leer mejor el perfil.
+        mesh_edge_color="#3d4758",
+        mesh_edge_line_width=1.75,
     ),
     "light": ViewportThemeSpec(
         id="light",
@@ -47,11 +52,11 @@ _THEMES: Dict[str, ViewportThemeSpec] = {
     ),
     "red_white": ViewportThemeSpec(
         id="red_white",
-        label="Rojo y blanco",
-        background_color="#4a0f0f",
-        background_top="#6b1515",
-        mesh_color="#f5f5f5",
-        mesh_edge_color="#ffffff",
+        label="Blanco y rojo",
+        background_color="#f5f2f2",
+        background_top="#ffffff",
+        mesh_color="#b82c2c",
+        mesh_edge_color="#7a1c1c",
     ),
     "blue_yellow": ViewportThemeSpec(
         id="blue_yellow",
@@ -89,12 +94,15 @@ def next_theme_id(current_id: str) -> str:
 
 def theme_to_style_dict(spec: ViewportThemeSpec) -> Dict[str, Any]:
     """Diccionario pasado a plot/pyvista_pestanas (viewport_style)."""
-    return {
+    out: Dict[str, Any] = {
         "background_color": spec.background_color,
         "background_top": spec.background_top,
         "mesh_color": spec.mesh_color,
         "mesh_edge_color": spec.mesh_edge_color,
     }
+    if spec.mesh_edge_line_width is not None:
+        out["mesh_edge_line_width"] = float(spec.mesh_edge_line_width)
+    return out
 
 
 def settings_path() -> Path:

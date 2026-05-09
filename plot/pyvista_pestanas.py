@@ -937,6 +937,19 @@ def _ipn_mesh_face_edge_colors(
     )
 
 
+def _ipn_mesh_edge_line_width(viewport_style: Optional[Mapping[str, Any]]) -> float:
+    """Grosor de aristas del perfil IPN (tema oscuro suele pedir > 1)."""
+    if viewport_style is None:
+        return 1.0
+    w = viewport_style.get("mesh_edge_line_width")
+    if w is None:
+        return 1.0
+    try:
+        return float(max(0.5, min(4.0, float(w))))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _add_diagram_layers(
     plotter: Any,
     ipn: pv.PolyData,
@@ -951,6 +964,7 @@ def _add_diagram_layers(
     else:
         plotter.set_background("white")
     mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
+    lw_ipn = _ipn_mesh_edge_line_width(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
@@ -958,7 +972,7 @@ def _add_diagram_layers(
             opacity=0.9,
             show_edges=True,
             edge_color=mec,
-            line_width=1,
+            line_width=lw_ipn,
         )
     for quad, col in quads:
         qm = _quad_to_polydata(quad)
@@ -1016,6 +1030,7 @@ def _populate_estructura(
     else:
         plotter.set_background("white")
     mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
+    lw_ipn = _ipn_mesh_edge_line_width(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
@@ -1023,7 +1038,7 @@ def _populate_estructura(
             opacity=0.9,
             show_edges=True,
             edge_color=mec,
-            line_width=1,
+            line_width=lw_ipn,
             label="Estructura",
         )
     _add_terna_global(plotter, longitud_terna)
@@ -1064,6 +1079,7 @@ def _populate_fuerzas(
     else:
         plotter.set_background("white")
     mc, mec = _ipn_mesh_face_edge_colors(viewport_style)
+    lw_ipn = _ipn_mesh_edge_line_width(viewport_style)
     if ipn.n_points > 0:
         plotter.add_mesh(
             ipn,
@@ -1071,7 +1087,7 @@ def _populate_fuerzas(
             opacity=0.9,
             show_edges=True,
             edge_color=mec,
-            line_width=1,
+            line_width=lw_ipn,
         )
     _add_terna_global(plotter, longitud_vector)
     r_force, _ = _tube_radius_from_ipn(ipn)
@@ -1176,15 +1192,17 @@ def _populate_deformada(
     if ipn.n_points > 0:
         if viewport_style is not None:
             d_mc, d_ec = _ipn_mesh_face_edge_colors(viewport_style)
+            lw_ipn = _ipn_mesh_edge_line_width(viewport_style)
         else:
             d_mc, d_ec = "#2980b9", "#1a5276"
+            lw_ipn = 1.0
         plotter.add_mesh(
             ipn,
             color=d_mc,
             opacity=0.92,
             show_edges=True,
             edge_color=d_ec,
-            line_width=1,
+            line_width=lw_ipn,
         )
     _add_terna_global(plotter, longitud_terna)
     if mostrar_ejes_locales:
@@ -1583,6 +1601,40 @@ def _try_import_qt():
         return None
 
 
+def _qt_widget_xy_to_vtk_display(plotter: Any, x_qt: int, y_qt: int) -> Optional[Tuple[int, int]]:
+    """
+    Convierte (x, y) del widget Qt al sistema de píxeles de display de VTK.
+
+    Debe coincidir con ``QVTKRenderWindowInteractor._setEventInformation`` en
+    ``pyvistaqt`` (origen Y abajo en Qt, arriba en VTK, y ``devicePixelRatio``).
+    Si no, ``FindPokedRenderer`` / ``DisplayToWorld`` fallan y el zoom “hacia el
+    cursor” desplaza mal la cámara (y se siente rota la navegación).
+    """
+    try:
+        iw = plotter.interactor
+    except Exception:
+        return None
+    try:
+        scale = float(iw._getPixelRatio())  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            scale = float(iw.devicePixelRatioF())
+        except Exception:
+            try:
+                scale = float(iw.devicePixelRatio())
+            except Exception:
+                scale = 1.0
+    try:
+        h = int(iw.height())
+    except Exception:
+        return None
+    if h <= 0:
+        return None
+    x_vtk = int(round(float(x_qt) * scale))
+    y_vtk = int(round(float(h - int(y_qt) - 1) * scale))
+    return x_vtk, y_vtk
+
+
 def install_zoom_toward_cursor(
     plotter: Any,
     zoom_in_factor: float = 0.88,
@@ -1608,11 +1660,15 @@ def ftool_zoom_wheel_toward_pixel(plotter: Any, x: int, y: int, zoom_in: bool) -
         iren = plotter.iren.interactor
     except Exception:
         return False
-    iren.SetEventPosition(int(x), int(y))
+    xy_vtk = _qt_widget_xy_to_vtk_display(plotter, int(x), int(y))
+    if xy_vtk is None:
+        return False
+    xd_i, yd_i = xy_vtk
+    iren.SetEventPosition(xd_i, yd_i)
     rw = iren.GetRenderWindow()
     if rw is None:
         return False
-    renderer = iren.FindPokedRenderer(int(x), int(y))
+    renderer = iren.FindPokedRenderer(xd_i, yd_i)
     if renderer is None:
         return False
     camera = renderer.GetActiveCamera()
@@ -1638,7 +1694,7 @@ def ftool_zoom_wheel_toward_pixel(plotter: Any, x: int, y: int, zoom_in: bool) -
             return wp[:3].astype(float)
         return (wp[:3] / w).astype(float)
 
-    xf, yf = float(x), float(y)
+    xf, yf = float(xd_i), float(yd_i)
     w0 = _hom(renderer, xf, yf, 0.0)
     w1 = _hom(renderer, xf, yf, 1.0)
     D = w1 - w0
