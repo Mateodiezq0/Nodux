@@ -1101,6 +1101,7 @@ def _populate_estructura(
     ipn_dims_per_bar_id: Optional[Dict[int, Dict[str, float]]] = None,
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
+    material_name_per_bar_id: Optional[Dict[int, str]] = None,
     viewport_style: Optional[Mapping[str, Any]] = None,
 ) -> None:
     ipn = build_ipn_mesh(
@@ -1129,6 +1130,42 @@ def _populate_estructura(
             line_width=lw_ipn,
             label="Estructura",
         )
+    if material_name_per_bar_id:
+        label_points: List[List[float]] = []
+        label_texts: List[str] = []
+        h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
+        z_offset = float(max(1.0, max(h, b) * 0.55))
+        for barra in barras:
+            bid = getattr(barra, "id", None)
+            if bid is None:
+                continue
+            try:
+                bid_int = int(bid)
+            except (TypeError, ValueError):
+                continue
+            mat_name = str(material_name_per_bar_id.get(bid_int) or "").strip()
+            if not mat_name:
+                continue
+            ci, cf = obtener_coordenadas_barra(barra, nodos_dict)
+            if ci is None or cf is None:
+                continue
+            p0 = np.asarray(ci, dtype=float).ravel()[:3]
+            p1 = np.asarray(cf, dtype=float).ravel()[:3]
+            pm = 0.5 * (p0 + p1)
+            pm[2] += z_offset
+            label_points.append(pm.tolist())
+            label_texts.append(mat_name)
+        if label_points:
+            pts = np.asarray(label_points, dtype=float)
+            plotter.add_point_labels(
+                pts,
+                label_texts,
+                font_size=10,
+                text_color="#1a1d22",
+                show_points=False,
+                always_visible=True,
+                pickable=False,
+            )
     _add_terna_global(plotter, longitud_terna)
     if mostrar_ejes_locales:
         h, b, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
