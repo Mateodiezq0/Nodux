@@ -5,6 +5,9 @@ Está pensada para ingenieros, estudiantes y cualquier persona que necesite
 calcular cómo se comporta una estructura (como un pórtico o una viga) cuando
 se le aplican cargas o fuerzas.
 
+<img width="1918" height="1138" alt="image" src="https://github.com/user-attachments/assets/bfc7931f-c1de-42f4-a7f8-eebf7f9c45ec" />
+
+
 ---
 
 ## ¿Qué hace Nodux?
