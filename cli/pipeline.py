@@ -15,6 +15,8 @@ if str(_ROOT) not in sys.path:
 
 import numpy as np
 
+from cli.app_info import default_run_window_title
+
 from .loader import build_estructura_from_spec
 from core.estructura import Estructura
 
@@ -45,13 +47,15 @@ def run_pipeline(
     *,
     escala_diagrama: float = 1.0,
     ipn_dims: Optional[Dict[str, float]] = None,
-    titulo: str = "Reticular — estructura y esfuerzos",
+    titulo: Optional[str] = None,
     show_matplotlib: bool = True,
 ) -> List[np.ndarray]:
     """
     Ensamble → cargas → desplazamientos → reacciones/solicitaciones → gráficos matplotlib (pestañas).
     Devuelve la lista de vectores 12 (internas por barra) como ``calcular_reacciones``.
     """
+    if titulo is None:
+        titulo = default_run_window_title()
     ipn_dims = ipn_dims or {"h": 20.0, "b": 10.0, "tw": 0.6, "tf": 1.0}
 
     F_internas = solve_estructura(estructura)

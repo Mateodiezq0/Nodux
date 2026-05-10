@@ -226,6 +226,30 @@ def _apply_inspector_header_resize_modes(tbl: Any, backend: str) -> None:
         vp.update()
 
 
+def _bootstrap_qapplication_for_splash() -> tuple[str, Any, Any]:
+    """Crea QApplication con imports mínimos de Qt (sin pyvistaqt) para mostrar splash al instante."""
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        return ("PySide6", Qt, app)
+    except ImportError:
+        pass
+    try:
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        return ("PyQt5", Qt, app)
+    except ImportError:
+        raise ImportError("Instalá: pip install PySide6 o PyQt5") from None
+
+
 def _try_qt():
     try:
         from PySide6.QtCore import Qt
@@ -253,7 +277,7 @@ def _try_qt():
             QWidget,
         )
 
-        from pyvistaqt import QtInteractor
+        from pyvistaqt import QtInteractor  # noqa: PLC0415 — pesado; splash ya visible.
 
         return (
             "PySide6",
@@ -309,7 +333,7 @@ def _try_qt():
             QWidget,
         )
 
-        from pyvistaqt import QtInteractor
+        from pyvistaqt import QtInteractor  # noqa: PLC0415 — pesado; splash ya visible.
 
         return (
             "PyQt5",
@@ -395,13 +419,14 @@ class FtoolMainWindow(_QMainWindow):
         self._widgets = qt_mod
         super().__init__(parent)
         _startup_progress_tick(startup_progress, 6, "Iniciando ventana…")
-        titulo = "Reticular — análisis de estructuras 3D (PyVista)"
+        from cli.app_info import main_window_title
+
+        titulo = main_window_title()
         if precargar_ejemplo:
             from .supertesteo_spec import get_supertesteo_spec
 
             try:
                 self._spec = copy.deepcopy(get_supertesteo_spec())
-                titulo = "Reticular — ejemplo supertesteo (precargado)"
             except Exception:
                 self._spec = _default_spec()
         else:
@@ -1673,7 +1698,9 @@ class FtoolMainWindow(_QMainWindow):
             if low.endswith(".pdf"):
                 from cli.resultados_export import write_resultados_pdf
 
-                write_resultados_pdf(pth, dfs, titulo="Reticular — resultados")
+                from cli.app_info import default_pdf_results_title
+
+                write_resultados_pdf(pth, dfs, titulo=default_pdf_results_title())
             elif low.endswith(".csv"):
                 idx = self._tabs_resultados_sheets.currentIndex()
                 keys = self._resultados_sheet_key_order
@@ -3293,26 +3320,47 @@ class FtoolMainWindow(_QMainWindow):
             prog.setValue(48)
             QApplication.processEvents()
             self._F_internas = solve_estructura(est)
-
-            prog.setLabelText("Actualizando tablas y vista 3D…")
-            prog.setValue(78)
+            prog.setLabelText("Ecuaciones resueltas.")
+            prog.setValue(68)
             QApplication.processEvents()
         except Exception as e:
             self._QMessageBox.critical(self, "Analisis", str(e))
+            try:
+                prog.setValue(100)
+            except Exception:
+                pass
+            try:
+                prog.close()
+            except Exception:
+                pass
             return
+
+        try:
+            prog.setLabelText("Actualizando tablas de resultados…")
+            prog.setValue(82)
+            QApplication.processEvents()
+            self._estructura = est
+            self._solved = True
+            self._refresh_resultados_tables_ui()
+            prog.setLabelText("Generando vista 3D…")
+            prog.setValue(92)
+            QApplication.processEvents()
+            self._update_status_summary()
+            self._redraw()
+            self.statusBar().showMessage(
+                "Análisis completado. Elegí una vista de esfuerzos o deformada."
+            )
+        except Exception as e:
+            self._QMessageBox.critical(self, "Analisis", str(e))
         finally:
             try:
                 prog.setValue(100)
             except Exception:
                 pass
-            prog.close()
-
-        self._estructura = est
-        self._solved = True
-        self._refresh_resultados_tables_ui()
-        self._update_status_summary()
-        self.statusBar().showMessage("Análisis completado. Elegí una vista de esfuerzos o deformada.")
-        self._redraw()
+            try:
+                prog.close()
+            except Exception:
+                pass
 
     def _new_project(self) -> None:
         self._spec = _default_spec()
@@ -4008,8 +4056,106 @@ class FtoolMainWindow(_QMainWindow):
 
 
 def run_ftool_gui(*, precargar_ejemplo: bool = False) -> None:
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            from cli.app_info import windows_app_user_model_id
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                windows_app_user_model_id()
+            )
+        except Exception:
+            pass
+
+    backend, Qt, app = _bootstrap_qapplication_for_splash()
+
+    try:
+        app.setStyle("Fusion")
+    except Exception:
+        pass
+
+    from cli.gui_icons import ftool_app_window_icon
+
+    _app_icon = ftool_app_window_icon()
+    app.setWindowIcon(_app_icon)
+    from cli.app_info import APP_NAME, app_display_name
+
+    try:
+        app.setApplicationName(APP_NAME)
+    except Exception:
+        pass
+
+    if backend == "PySide6":
+        from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QVBoxLayout
+    else:
+        from PyQt5.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QVBoxLayout
+
+    _MIN_DLG_SS = (
+        "QDialog#noduxSplash { background-color: #ffffff; border: 2px solid #2563eb; "
+        "border-radius: 10px; }"
+    )
+    _MIN_TITLE_SS = "color: #111827; font-weight: 600; font-size: 15pt;"
+    _MIN_MSG_SS = "color: #4b5563;"
+
+    _splash = QDialog()
+    _splash.setObjectName("noduxSplash")
+    _splash.setStyleSheet(_MIN_DLG_SS)
+    _splash.setWindowIcon(_app_icon)
+    _splash.setWindowTitle(app_display_name())
+    _TS = getattr(Qt, "WindowType", Qt)
+    _sp_flag = getattr(_TS, "SplashScreen", Qt.SplashScreen)
+    _fr_flag = getattr(_TS, "FramelessWindowHint", Qt.FramelessWindowHint)
+    _top_flag = getattr(_TS, "WindowStaysOnTopHint", Qt.WindowStaysOnTopHint)
+    _splash.setWindowFlags(_sp_flag | _fr_flag | _top_flag)
+    _sl = QVBoxLayout(_splash)
+    _sl.setContentsMargins(22, 18, 22, 18)
+    _sl.setSpacing(10)
+    _lbl_title = QLabel(app_display_name())
+    _lbl_title.setStyleSheet(_MIN_TITLE_SS)
+    _lbl_msg = QLabel("Cargando…")
+    _lbl_msg.setStyleSheet(_MIN_MSG_SS)
+    _bar = QProgressBar()
+    _bar.setRange(0, 100)
+    _bar.setValue(0)
+    _bar.setTextVisible(True)
+    _sl.addWidget(_lbl_title)
+    _sl.addWidget(_lbl_msg)
+    _sl.addWidget(_bar)
+    _splash.setLayout(_sl)
+    _splash.setFixedSize(400, 138)
+    _splash.show()
+    QApplication.processEvents()
+    _ps = app.primaryScreen()
+    if _ps is not None:
+        _fg = _splash.frameGeometry()
+        _fg.moveCenter(_ps.availableGeometry().center())
+        _splash.move(_fg.topLeft())
+
+    def _startup_tick_ui(pct: int, text: str) -> None:
+        _bar.setValue(pct)
+        _lbl_msg.setText(text)
+        QApplication.processEvents()
+
+    _startup_tick_ui(2, "Iniciando…")
+    try:
+        from cli.viewport_theme import load_viewport_theme_id
+        from cli.qt_app_theme import get_app_color_tokens, splash_stylesheets
+
+        _sp_tok = get_app_color_tokens(load_viewport_theme_id())
+        _sp_dlg, _sp_title, _sp_msg = splash_stylesheets(_sp_tok)
+        _splash.setStyleSheet(_sp_dlg)
+        _lbl_title.setStyleSheet(f"font-weight: 600; font-size: 15pt; {_sp_title}")
+        _lbl_msg.setStyleSheet(_sp_msg)
+        QApplication.processEvents()
+    except Exception:
+        pass
+
+    _startup_tick_ui(8, "Cargando motor 3D…")
     qt = _try_qt()
     if qt is None:
+        _splash.close()
+        QApplication.processEvents()
         raise ImportError("Instalá: pip install pyvista pyvistaqt PySide6")
 
     (
@@ -4039,74 +4185,6 @@ def run_ftool_gui(*, precargar_ejemplo: bool = False) -> None:
         QtInteractor,
     ) = qt
 
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
-    try:
-        app.setStyle("Fusion")
-    except Exception:
-        pass
-
-    from cli.gui_icons import ftool_app_window_icon
-
-    _app_icon = ftool_app_window_icon()
-    app.setWindowIcon(_app_icon)
-    try:
-        app.setApplicationDisplayName("Reticular")
-    except Exception:
-        pass
-
-    if backend == "PySide6":
-        from PySide6.QtWidgets import QProgressBar
-    else:
-        from PyQt5.QtWidgets import QProgressBar
-
-    from cli.viewport_theme import load_viewport_theme_id
-    from cli.qt_app_theme import get_app_color_tokens, splash_stylesheets
-
-    _sp_tok = get_app_color_tokens(load_viewport_theme_id())
-    _sp_dlg, _sp_title, _sp_msg = splash_stylesheets(_sp_tok)
-
-    _splash = QDialog()
-    _splash.setObjectName("reticularSplash")
-    _splash.setStyleSheet(_sp_dlg)
-    _splash.setWindowIcon(_app_icon)
-    _splash.setWindowTitle("Reticular")
-    _TS = getattr(Qt, "WindowType", Qt)
-    _sp_flag = getattr(_TS, "SplashScreen", Qt.SplashScreen)
-    _fr_flag = getattr(_TS, "FramelessWindowHint", Qt.FramelessWindowHint)
-    _top_flag = getattr(_TS, "WindowStaysOnTopHint", Qt.WindowStaysOnTopHint)
-    _splash.setWindowFlags(_sp_flag | _fr_flag | _top_flag)
-    _sl = QVBoxLayout(_splash)
-    _sl.setContentsMargins(22, 18, 22, 18)
-    _sl.setSpacing(10)
-    _lbl_title = QLabel("Reticular")
-    _lbl_title.setStyleSheet(f"font-weight: 600; font-size: 15pt; {_sp_title}")
-    _lbl_msg = QLabel("Cargando…")
-    _lbl_msg.setStyleSheet(_sp_msg)
-    _bar = QProgressBar()
-    _bar.setRange(0, 100)
-    _bar.setValue(0)
-    _bar.setTextVisible(True)
-    _sl.addWidget(_lbl_title)
-    _sl.addWidget(_lbl_msg)
-    _sl.addWidget(_bar)
-    _splash.setLayout(_sl)
-    _splash.setFixedSize(400, 138)
-    _splash.show()
-    QApplication.processEvents()
-    _ps = app.primaryScreen()
-    if _ps is not None:
-        _fg = _splash.frameGeometry()
-        _fg.moveCenter(_ps.availableGeometry().center())
-        _splash.move(_fg.topLeft())
-
-    def _startup_tick_ui(pct: int, text: str) -> None:
-        _bar.setValue(pct)
-        _lbl_msg.setText(text)
-        QApplication.processEvents()
-
-    _startup_tick_ui(2, "Iniciando…")
     try:
         w = FtoolMainWindow(
             backend,

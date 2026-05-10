@@ -1863,11 +1863,15 @@ def mostrar_dibujos_pyvista_pestanas(
     mostrar_ejes_locales: bool = True,
     longitud_vector: float = 45.0,
     escala_diagrama_corte: float = 1.0,
-    titulo_app: str = "Dibujos — PyVista (todas las vistas)",
+    titulo_app: Optional[str] = None,
     desplazamientos: Optional[np.ndarray] = None,
     escala_deform_inicial: float = 1.0,
 ) -> None:
     _require_pyvista()
+    if titulo_app is None:
+        from cli.app_info import pyvista_tabs_window_title
+
+        titulo_app = pyvista_tabs_window_title()
     qt = _try_import_qt()
     if qt is None:
         raise ImportError(

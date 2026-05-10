@@ -2,7 +2,7 @@
 
 ## Qué es
 
-**Reticular** (repo `Hyperstatic_Structures`): análisis lineal de **pórticos / celosías 3D** por elementos tipo viga (Euler-Bernoulli), con cargas puntuales en barras, cargas distribuidas, cargas nodales y apoyos por grados de libertad.
+**Nodux** (nombre comercial de la app; versión en `cli/app_info.py`) vive en el repo `Hyperstatic_Structures`: análisis lineal de **pórticos / celosías 3D** por elementos tipo viga (Euler-Bernoulli), con cargas puntuales en barras, cargas distribuidas, cargas nodales y apoyos por grados de libertad.
 
 ## Unidades y convención
 

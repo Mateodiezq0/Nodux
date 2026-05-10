@@ -936,7 +936,7 @@ def resultados_sheet_bar_stylesheet(t: AppColorTokens) -> str:
 def splash_stylesheets(t: AppColorTokens) -> tuple[str, str, str]:
     """(dialog, title, message) QSS para splash de arranque."""
     dlg = (
-        f"QDialog#reticularSplash {{ background-color: {t.surface}; "
+        f"QDialog#noduxSplash {{ background-color: {t.surface}; "
         f"border: 2px solid {t.accent}; border-radius: 8px; }}"
     )
     title = f"font-weight: 600; font-size: 15pt; color: {t.accent};"

@@ -10,6 +10,10 @@
 
 Seguí **[docs/ai/00_SETUP_AND_ENV.md](docs/ai/00_SETUP_AND_ENV.md)** y `requirements.txt`. No asumas paquetes globales: el proyecto debe instalarse con `pip install -r requirements.txt` en un venv.
 
+## Nombre y versión de la app
+
+- Producto: **Nodux**; constantes en **`cli/app_info.py`** (`APP_VERSION`, etc.). Al bump de versión, actualizar solo ese módulo salvo textos descriptivos puntuales.
+
 ## Normas de cambio
 
 - **No romper** los comandos `python -m cli gui`, `run` e `interactive` sin actualizar `cli/__main__.py` y la documentación en `docs/ai/`.

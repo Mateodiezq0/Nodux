@@ -186,7 +186,9 @@ def run_interactive_menu() -> None:
                 continue
             print("Resolviendo y abriendo ventana (pestañas: estructura, fuerzas, V, N, M)...")
             try:
-                run_pipeline(est, show_matplotlib=True, titulo="Hyperstatic CLI (interactivo)")
+                from cli.app_info import interactive_pipeline_title
+
+                run_pipeline(est, show_matplotlib=True, titulo=interactive_pipeline_title())
             except Exception as e:
                 print(f"Error: {e}")
         else:

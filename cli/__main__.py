@@ -46,9 +46,9 @@ def _cmd_gui(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Reticular — análisis de estructuras reticuladas 3D."
-    )
+    from cli.app_info import cli_description, default_run_window_title
+
+    p = argparse.ArgumentParser(description=cli_description())
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pr = sub.add_parser("run", help="Cargar JSON/YAML y resolver + ventana con pestañas (geometría, fuerzas, diagramas).")
@@ -59,7 +59,7 @@ def main() -> None:
         help="Solo resolver en memoria; no abrir matplotlib.",
     )
     pr.add_argument("--escala-diagrama", type=float, default=1.0, dest="escala_diagrama")
-    pr.add_argument("--titulo", type=str, default="Reticular — estructura y esfuerzos")
+    pr.add_argument("--titulo", type=str, default=default_run_window_title())
 
     pi = sub.add_parser("interactive", help="Menú paso a paso para armar nodos, barras y cargas; luego graficar.")
     pg = sub.add_parser("gui", help="Ventana gráfica estilo Ftool (PyVista + Qt): modelo, análisis, diagramas.")

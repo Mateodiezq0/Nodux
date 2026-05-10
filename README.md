@@ -1,6 +1,6 @@
-# Hyperstatic_Structures (Reticular)
+# Hyperstatic_Structures
 
-Análisis lineal de estructuras reticuladas 3D (pórticos / vigas espaciales): modelo en JSON o YAML, resolución, visualización (matplotlib y/o PyVista + Qt) y exportación de resultados.
+**Nodux** (p. ej. Nodux 1.0) es la aplicación de análisis: estructuras reticuladas 3D (pórticos / vigas espaciales) con modelo en JSON o YAML, resolución, visualización (matplotlib y/o PyVista + Qt) y exportación de resultados. Nombre y versión centralizados en `cli/app_info.py`.
 
 ## Inicio rápido
 

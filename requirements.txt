@@ -1,4 +1,4 @@
-# Reticular / Hyperstatic_Structures — entorno de ejecución completo.
+# Nodux (repo Hyperstatic_Structures) — entorno de ejecución completo.
 # Instalar desde la raíz del repo:  pip install -r requirements.txt
 #
 # Python: 3.10+ recomendado (3.11 probado en desarrollo).
