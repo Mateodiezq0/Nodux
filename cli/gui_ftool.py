@@ -2154,32 +2154,32 @@ class FtoolMainWindow(_QMainWindow):
                 out[bid] = label
         return out
 
-    def _dlg_material_editor(self, edit_name: Optional[str]) -> None:
-        """edit_name None = nuevo material."""
+    def _dlg_material_editor(self, edit_name: Optional[str]) -> None:  # noqa: C901
+        """
+        Asistente de 4 pasos para agregar o editar un material.
+
+        Paso 1: Nombre + propiedades elásticas (E, nu, gamma).
+        Paso 2: Definicion de seccion (catalogo / parametrica / manual).
+        Paso 3: Forma visual del perfil en el visor 3D.
+        Paso 4: Resumen y confirmacion.
+        """
         from cli.loader import _resolve_material_stiffness
 
         mats = self._spec.setdefault("materials", {})
         D = self._QDialog(self)
         D.setWindowTitle("Editar material" if edit_name else "Nuevo material")
-        D.setMinimumWidth(820)
+        D.setMinimumWidth(940)
+        D.setMinimumHeight(560)
+
         try:
             from PySide6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout
+            from PySide6.QtGui import QFont as _QFont
         except ImportError:
             from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout
+            from PyQt5.QtGui import QFont as _QFont
 
-        root_lay = QVBoxLayout(D)
-        main_h = QHBoxLayout()
-        left_w = self._QWidget()
-        left_w.setMinimumWidth(340)
-        form = self._QFormLayout(left_w)
-        SW = self._QStackedWidget
         W = self._QWidget
-
-        name_edit = self._QLineEdit()
-        if edit_name:
-            name_edit.setText(edit_name)
-            name_edit.setReadOnly(True)
-        form.addRow("Nombre (clave)", name_edit)
+        SW = self._QStackedWidget
 
         existing = dict(mats.get(edit_name, {})) if edit_name else {}
         from cli.profile_polygon import normalize_polygon_yz as _norm_poly, polygon_area_yz as _poly_area
@@ -2187,38 +2187,196 @@ class FtoolMainWindow(_QMainWindow):
         _mp_load = _norm_poly(existing.get("profile_polygon_yz"))
         manual_poly_state: List[List[float]] = [list(p) for p in _mp_load] if _mp_load else []
 
+        # ── Determinar modo inicial desde datos existentes ────────────────
+        ex_catalog = existing.get("catalog") or {}
+        ex_catalog = ex_catalog if isinstance(ex_catalog, dict) else {}
+        ex_vz = existing.get("viz") or {}
+        ex_vz = ex_vz if isinstance(ex_vz, dict) else {}
+        has_catalog_saved = bool(ex_catalog.get("family") and ex_catalog.get("designation"))
+        has_section_saved = bool(existing.get("section"))
+        if has_catalog_saved:
+            initial_source = "catalog"
+        elif has_section_saved:
+            initial_source = "param"
+        else:
+            initial_source = "manual"
+        src_idx = {"catalog": 0, "param": 1, "manual": 2}.get(initial_source, 2)
+
+        # ── Layout principal ──────────────────────────────────────────────
+        root_lay = QVBoxLayout(D)
+        root_lay.setSpacing(0)
+        root_lay.setContentsMargins(0, 0, 0, 0)
+        main_h = QHBoxLayout()
+        main_h.setSpacing(0)
+
+        # Panel izquierdo: asistente
+        wizard_panel = W()
+        wizard_vlay = QVBoxLayout(wizard_panel)
+        wizard_vlay.setContentsMargins(18, 16, 18, 10)
+        wizard_vlay.setSpacing(8)
+
+        # Encabezado de paso
+        lbl_step = self._QLabel("Paso 1 de 4  —  Identificacion y propiedades elasticas")
+        _fstep = _QFont()
+        _fstep.setBold(True)
+        _fstep.setPointSize(10)
+        lbl_step.setFont(_fstep)
+        wizard_vlay.addWidget(lbl_step)
+
+        lbl_step_hint = self._QLabel("")
+        lbl_step_hint.setObjectName("mutedLabel")
+        lbl_step_hint.setWordWrap(True)
+        wizard_vlay.addWidget(lbl_step_hint)
+
+        # Stacked widget para las paginas del asistente
+        wizard_stack = SW()
+        wizard_vlay.addWidget(wizard_stack, stretch=1)
+
+        # Botones de navegacion
+        nav_row = QHBoxLayout()
+        btn_cancel = QPushButton("Cancelar")
+        btn_back = QPushButton("< Atras")
+        btn_next = QPushButton("Siguiente >")
+        btn_save = QPushButton("Guardar")
+        btn_back.setEnabled(False)
+        btn_save.setVisible(False)
+        nav_row.addWidget(btn_cancel)
+        nav_row.addStretch(1)
+        nav_row.addWidget(btn_back)
+        nav_row.addWidget(btn_next)
+        nav_row.addWidget(btn_save)
+        wizard_vlay.addLayout(nav_row)
+
+        main_h.addWidget(wizard_panel, stretch=56)
+
+        # Panel derecho: previsualizacion (siempre visible)
+        right_w = W()
+        right_w.setMinimumWidth(270)
+        rv = QVBoxLayout(right_w)
+        rv.setContentsMargins(6, 16, 16, 10)
+        rv.setSpacing(6)
+        lbl_prev_side = self._QLabel("Previsualizacion de seccion")
+        lbl_prev_side.setObjectName("mutedLabel")
+        rv.addWidget(lbl_prev_side)
+
+        preview_canvas = None
+        preview_fig = None
+        _ManFigCanvas = None
+        try:
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _ManFigCanvas
+        except ImportError:
+            try:
+                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _ManFigCanvas
+            except ImportError:
+                pass
+
+        try:
+            from matplotlib.figure import Figure
+            try:
+                from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigCanvas
+            except ImportError:
+                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _FigCanvas
+            try:
+                from PySide6.QtWidgets import QSizePolicy as _QSP
+            except ImportError:
+                from PyQt5.QtWidgets import QSizePolicy as _QSP
+            from cli.section_preview import draw_material_preview
+
+            preview_fig = Figure(figsize=(3.6, 5.0), dpi=96)
+            preview_canvas = _FigCanvas(preview_fig)
+            preview_canvas.setMinimumWidth(250)
+            preview_canvas.setMinimumHeight(280)
+            preview_canvas.setSizePolicy(_QSP.Preferred, _QSP.Expanding)
+            rv.addWidget(preview_canvas)
+        except ImportError:
+            rv.addStretch(1)
+
+        main_h.addWidget(right_w, stretch=44)
+        root_lay.addLayout(main_h)
+
+        # ════════════════════════════════════════════════════════════════
+        # PAGINA 1 — Nombre y propiedades elasticas
+        # ════════════════════════════════════════════════════════════════
+        page1 = W()
+        f1 = self._QFormLayout(page1)
+        f1.setSpacing(10)
+        f1.setContentsMargins(0, 8, 0, 8)
+
+        name_edit = self._QLineEdit()
+        if edit_name:
+            name_edit.setText(edit_name)
+            name_edit.setReadOnly(True)
+        name_edit.setPlaceholderText("ej: acero_s235, hormigon_H30...")
+        f1.addRow("Nombre (clave):", name_edit)
+
+        lbl_name_hint = self._QLabel(
+            "Identificador unico del material. Las barras lo referencian por este nombre."
+        )
+        lbl_name_hint.setObjectName("mutedLabel")
+        lbl_name_hint.setWordWrap(True)
+        f1.addRow("", lbl_name_hint)
+
+        f1.addRow(self._QLabel(""))  # espaciado
+
         s_e = self._QDoubleSpinBox()
         s_e.setRange(1.0, 1e9)
-        s_e.setDecimals(4)
+        s_e.setDecimals(1)
         s_e.setValue(float(existing.get("E", 20000.0)))
-        form.addRow("E (Tn/cm²)", s_e)
+        s_e.setToolTip("Modulo de Young. Acero aprox. 21000, Hormigon aprox. 2000-3000 Tn/cm2")
+        f1.addRow("E — Modulo de elasticidad (Tn/cm2):", s_e)
 
         s_nu = self._QDoubleSpinBox()
         s_nu.setRange(-0.49, 0.499)
-        s_nu.setDecimals(4)
+        s_nu.setDecimals(3)
         s_nu.setValue(float(existing.get("nu", 0.3)))
-        form.addRow("ν (Poisson)", s_nu)
+        s_nu.setToolTip("Coeficiente de Poisson. Acero aprox. 0.3, Hormigon aprox. 0.2")
+        f1.addRow("nu — Coeficiente de Poisson:", s_nu)
 
         s_ga = self._QDoubleSpinBox()
         s_ga.setRange(0.0, 1.0)
         s_ga.setDecimals(6)
         s_ga.setValue(float(existing.get("gamma", 0.00785)))
-        form.addRow("γ peso específico (Tn/cm³)", s_ga)
+        s_ga.setToolTip("Peso propio del material. Acero aprox. 0.00785, Hormigon aprox. 0.0025 Tn/cm3")
+        f1.addRow("gamma — Peso especifico (Tn/cm3):", s_ga)
 
-        chk_viz_global = self._QCheckBox("Vista 3D: usar dimensiones globales del visor (perfil)")
-        ex_vz = existing.get("viz")
-        ex_vz = ex_vz if isinstance(ex_vz, dict) else {}
-        ex_catalog = existing.get("catalog")
-        ex_catalog = ex_catalog if isinstance(ex_catalog, dict) else {}
-        has_full_viz = all(k in ex_vz for k in ("h", "b", "tw", "tf"))
-        if "use_global" in ex_vz:
-            use_global_viz = bool(ex_vz["use_global"])
-        else:
-            use_global_viz = not has_full_viz
-        chk_viz_global.setChecked(use_global_viz)
+        wizard_stack.addWidget(page1)
+
+        # ════════════════════════════════════════════════════════════════
+        # PAGINA 2 — Definicion de la seccion
+        # ════════════════════════════════════════════════════════════════
+        page2 = W()
+        p2_vlay = QVBoxLayout(page2)
+        p2_vlay.setSpacing(8)
+        p2_vlay.setContentsMargins(0, 4, 0, 4)
+
+        lbl_source_q = self._QLabel("Como queres definir la seccion transversal de este material?")
+        p2_vlay.addWidget(lbl_source_q)
+
+        source_combo = self._QComboBox()
+        source_combo.addItem("Catalogo de perfiles  (IPN, UPN...)", "catalog")
+        source_combo.addItem("Parametrica  (definir por dimensiones de la forma)", "param")
+        source_combo.addItem("Manual  (ingresar A, Iy, Iz, J directamente)", "manual")
+        source_combo.setCurrentIndex(src_idx)
+        p2_vlay.addWidget(source_combo)
+
+        lbl_source_hint = self._QLabel("")
+        lbl_source_hint.setObjectName("mutedLabel")
+        lbl_source_hint.setWordWrap(True)
+        p2_vlay.addWidget(lbl_source_hint)
+
+        sec_source_stack = SW()
+        p2_vlay.addWidget(sec_source_stack, stretch=1)
+        wizard_stack.addWidget(page2)
+
+        # ── Sub-pagina A: Catalogo ────────────────────────────────────
+        page_cat = W()
+        fcat = self._QFormLayout(page_cat)
+        fcat.setSpacing(8)
+
         profile_family = self._QComboBox()
         for _fam in ("IPN", "UPN", "Perfil L"):
             profile_family.addItem(_fam, _fam)
+
         profile_design = self._QComboBox()
         ipn_catalog = _load_ipn_catalog()
         saved_family = str(ex_catalog.get("family") or ex_vz.get("family") or "IPN")
@@ -2228,170 +2386,112 @@ class FtoolMainWindow(_QMainWindow):
         ix_family = profile_family.findData(saved_family)
         if ix_family >= 0:
             profile_family.setCurrentIndex(ix_family)
-        vh = self._QDoubleSpinBox()
-        vh.setRange(1e-6, 1e6)
-        vh.setDecimals(4)
-        vh.setValue(float(ex_vz.get("h", IPN_DEFAULT["h"])))
-        vb = self._QDoubleSpinBox()
-        vb.setRange(1e-6, 1e6)
-        vb.setDecimals(4)
-        vb.setValue(float(ex_vz.get("b", IPN_DEFAULT["b"])))
-        vtf = self._QDoubleSpinBox()
-        vtf.setRange(1e-6, 1e6)
-        vtf.setDecimals(4)
-        vtf.setValue(float(ex_vz.get("tf", IPN_DEFAULT["tf"])))
-        vhw = self._QDoubleSpinBox()
-        vhw.setRange(1e-6, 1e6)
-        vhw.setDecimals(4)
-        vhw.setValue(float(ex_vz.get("hw", max(vh.value() - 2.0 * vtf.value(), 1e-6))))
-        vtw = self._QDoubleSpinBox()
-        vtw.setRange(1e-6, 1e6)
-        vtw.setDecimals(4)
-        vtw.setValue(float(ex_vz.get("tw", IPN_DEFAULT["tw"])))
-        viz_box = W()
-        fv = self._QFormLayout(viz_box)
-        fv.addRow("Tipo de perfil", profile_family)
-        fv.addRow("Designación", profile_design)
-        fv.addRow("d (cm)", vh)
-        fv.addRow("bf (cm)", vb)
-        fv.addRow("tf patín (cm)", vtf)
-        fv.addRow("hw alma (cm)", vhw)
-        fv.addRow("tw alma (cm)", vtw)
-        form.addRow("", chk_viz_global)
-        form.addRow("Perfil en vista", viz_box)
 
-        def _current_catalog_profile() -> Optional[Dict[str, Any]]:
-            data = profile_design.currentData()
-            return data if isinstance(data, dict) else None
+        fcat.addRow("Familia de perfil:", profile_family)
+        fcat.addRow("Designacion:", profile_design)
 
-        def _apply_catalog_dims(row: Optional[Dict[str, Any]]) -> None:
-            if not row:
-                return
-            vh.setValue(float(row["d"]))
-            vb.setValue(float(row["bf"]))
-            vtf.setValue(float(row["tf"]))
-            vhw.setValue(float(row["hw"]))
-            vtw.setValue(float(row["tw"]))
+        lbl_cat_locked_title = self._QLabel("Propiedades que se tomaran del catalogo (solo lectura):")
+        lbl_cat_locked_title.setObjectName("mutedLabel")
+        fcat.addRow(lbl_cat_locked_title)
 
-        def _populate_profile_designations() -> None:
-            fam = str(profile_family.currentData() or profile_family.currentText())
-            profile_design.blockSignals(True)
-            profile_design.clear()
-            if fam == "IPN":
-                profile_design.addItem("Seleccionar perfil IPN…", None)
-                for row in ipn_catalog:
-                    profile_design.addItem(row["designation"], row)
-                if saved_designation:
-                    ix = profile_design.findText(saved_designation)
-                    if ix >= 0:
-                        profile_design.setCurrentIndex(ix)
-            else:
-                profile_design.addItem("Tabla pendiente", None)
-            profile_design.blockSignals(False)
-            _apply_catalog_dims(_current_catalog_profile())
+        cat_A_lbl = self._QLabel("—")
+        cat_Iy_lbl = self._QLabel("—")
+        cat_Iz_lbl = self._QLabel("—")
+        cat_J_lbl = self._QLabel("—")
+        cat_A_lbl.setToolTip("Area de la seccion (cm2) — viene del catalogo, no editable")
+        cat_Iy_lbl.setToolTip("Momento de inercia debil Iy (cm4) — viene del catalogo")
+        cat_Iz_lbl.setToolTip("Momento de inercia fuerte Iz (cm4) — viene del catalogo")
+        cat_J_lbl.setToolTip("Constante de torsion J (cm4) — viene del catalogo")
+        fcat.addRow("A (cm2):", cat_A_lbl)
+        fcat.addRow("I_y (cm4):", cat_Iy_lbl)
+        fcat.addRow("I_z (cm4):", cat_Iz_lbl)
+        fcat.addRow("J (cm4):", cat_J_lbl)
 
-        def _sync_viz_spin_enabled(checked: bool) -> None:
-            has_catalog = _current_catalog_profile() is not None
-            for w in (profile_family, profile_design):
-                w.setEnabled(True)
-            for w in (vh, vb, vtf, vhw, vtw):
-                w.setEnabled(not checked and not has_catalog)
-
-        profile_family.currentIndexChanged.connect(_populate_profile_designations)
-        profile_design.currentIndexChanged.connect(
-            lambda *_: (_apply_catalog_dims(_current_catalog_profile()), _sync_viz_spin_enabled(chk_viz_global.isChecked()))
+        lbl_cat_lock_info = self._QLabel(
+            "[Bloqueado]  Estos valores vienen del catalogo oficial y no se pueden modificar."
+            " Para usar valores distintos, elegit el modo Parametrica o Manual."
         )
-        _populate_profile_designations()
-        chk_viz_global.toggled.connect(_sync_viz_spin_enabled)
-        _sync_viz_spin_enabled(chk_viz_global.isChecked())
+        lbl_cat_lock_info.setWordWrap(True)
+        lbl_cat_lock_info.setObjectName("mutedLabel")
+        fcat.addRow(lbl_cat_lock_info)
 
-        mode = self._QComboBox()
-        mode.addItem("Sección paramétrica", "param")
-        mode.addItem("Propiedades manuales (A, I, J, G)", "manual")
-        has_sec = bool(existing.get("section"))
-        has_man = not has_sec and any(k in existing for k in ("A", "I_y", "G"))
-        mode.setCurrentIndex(0 if (has_sec or not has_man) else 1)
-        form.addRow("Modo", mode)
+        sec_source_stack.addWidget(page_cat)
 
-        stack = SW()
-        # --- página paramétrica ---
-        page_p = W()
-        fp = self._QFormLayout(page_p)
+        # ── Sub-pagina B: Parametrica ─────────────────────────────────
+        page_param = W()
+        fp = self._QFormLayout(page_param)
+        fp.setSpacing(8)
+
         sec_type = self._QComboBox()
         sec_map = [
-            ("Rectangular", "rectangle"),
-            ("Perfil I", "i_beam"),
-            ("Tubo circular", "tube_circle"),
-            ("Tubo rectangular", "tube_rect"),
+            ("Seccion rectangular solida", "rectangle"),
+            ("Perfil I  (doble T)", "i_beam"),
+            ("Tubo circular hueco", "tube_circle"),
+            ("Tubo rectangular hueco", "tube_rect"),
         ]
         for lab, key in sec_map:
             sec_type.addItem(lab, key)
-        sec_stack = SW()
+
         raw_sec = existing.get("section") or {}
         st0 = str(raw_sec.get("type", "rectangle")).lower()
         ix_t = 0
-        for i, (_, k) in enumerate(sec_map):
-            if st0 in (k, k.replace("_", "")):
-                ix_t = i
+        for _i, (_, _k) in enumerate(sec_map):
+            if st0 in (_k, _k.replace("_", "")):
+                ix_t = _i
                 break
         sec_type.setCurrentIndex(ix_t)
+        fp.addRow("Forma de la seccion:", sec_type)
+
+        sec_stack = SW()
 
         # rect
         w_rect = W()
         fr = self._QFormLayout(w_rect)
-        sb = self._QDoubleSpinBox()
-        sb.setRange(1e-6, 1e6)
-        sb.setValue(float(raw_sec.get("b", 10)))
-        sh = self._QDoubleSpinBox()
-        sh.setRange(1e-6, 1e6)
-        sh.setValue(float(raw_sec.get("h", 20)))
-        fr.addRow("b (cm)", sb)
-        fr.addRow("h (cm)", sh)
+        sb = self._QDoubleSpinBox(); sb.setRange(1e-6, 1e6); sb.setValue(float(raw_sec.get("b", 10)))
+        sh = self._QDoubleSpinBox(); sh.setRange(1e-6, 1e6); sh.setValue(float(raw_sec.get("h", 20)))
+        sb.setToolTip("Ancho de la seccion rectangular (cm)")
+        sh.setToolTip("Alto de la seccion rectangular (cm)")
+        fr.addRow("b — ancho (cm):", sb)
+        fr.addRow("h — alto (cm):", sh)
 
+        # i_beam
         w_i = W()
         fi = self._QFormLayout(w_i)
-        si_h = self._QDoubleSpinBox()
-        si_h.setRange(1e-6, 1e6)
-        si_h.setValue(float(raw_sec.get("h", 20)))
-        si_bf = self._QDoubleSpinBox()
-        si_bf.setRange(1e-6, 1e6)
-        si_bf.setValue(float(raw_sec.get("bf", 10)))
-        si_tw = self._QDoubleSpinBox()
-        si_tw.setRange(1e-6, 1e6)
-        si_tw.setValue(float(raw_sec.get("tw", 0.6)))
-        si_tf = self._QDoubleSpinBox()
-        si_tf.setRange(1e-6, 1e6)
-        si_tf.setValue(float(raw_sec.get("tf", 1.0)))
-        fi.addRow("h total (cm)", si_h)
-        fi.addRow("bf patín (cm)", si_bf)
-        fi.addRow("tw alma (cm)", si_tw)
-        fi.addRow("tf patín (cm)", si_tf)
+        si_h = self._QDoubleSpinBox(); si_h.setRange(1e-6, 1e6); si_h.setValue(float(raw_sec.get("h", 20)))
+        si_bf = self._QDoubleSpinBox(); si_bf.setRange(1e-6, 1e6); si_bf.setValue(float(raw_sec.get("bf", 10)))
+        si_tw = self._QDoubleSpinBox(); si_tw.setRange(1e-6, 1e6); si_tw.setValue(float(raw_sec.get("tw", 0.6)))
+        si_tf = self._QDoubleSpinBox(); si_tf.setRange(1e-6, 1e6); si_tf.setValue(float(raw_sec.get("tf", 1.0)))
+        si_h.setToolTip("Altura total del perfil I (cm)")
+        si_bf.setToolTip("Ancho del patin (ala) del perfil I (cm)")
+        si_tw.setToolTip("Espesor del alma del perfil I (cm)")
+        si_tf.setToolTip("Espesor del patin del perfil I (cm)")
+        fi.addRow("h — altura total (cm):", si_h)
+        fi.addRow("bf — ancho de patin (cm):", si_bf)
+        fi.addRow("tw — espesor de alma (cm):", si_tw)
+        fi.addRow("tf — espesor de patin (cm):", si_tf)
 
+        # tube_circle
         w_tc = W()
         ftc = self._QFormLayout(w_tc)
-        sD = self._QDoubleSpinBox()
-        sD.setRange(1e-6, 1e6)
-        sD.setValue(float(raw_sec.get("D", 10)))
-        stwall = self._QDoubleSpinBox()
-        stwall.setRange(1e-6, 1e6)
-        stwall.setValue(float(raw_sec.get("t", 0.5)))
-        ftc.addRow("D exterior (cm)", sD)
-        ftc.addRow("t pared (cm)", stwall)
+        sD = self._QDoubleSpinBox(); sD.setRange(1e-6, 1e6); sD.setValue(float(raw_sec.get("D", 10)))
+        stwall = self._QDoubleSpinBox(); stwall.setRange(1e-6, 1e6); stwall.setValue(float(raw_sec.get("t", 0.5)))
+        sD.setToolTip("Diametro exterior del tubo (cm)")
+        stwall.setToolTip("Espesor de la pared del tubo (cm)")
+        ftc.addRow("D — diametro exterior (cm):", sD)
+        ftc.addRow("t — espesor de pared (cm):", stwall)
 
+        # tube_rect
         w_tr = W()
         ftr = self._QFormLayout(w_tr)
-        sbo = self._QDoubleSpinBox()
-        sbo.setRange(1e-6, 1e6)
-        sbo.setValue(float(raw_sec.get("b", 12)))
-        sho = self._QDoubleSpinBox()
-        sho.setRange(1e-6, 1e6)
-        sho.setValue(float(raw_sec.get("h", 12)))
-        sto = self._QDoubleSpinBox()
-        sto.setRange(1e-6, 1e6)
-        sto.setValue(float(raw_sec.get("t", 0.5)))
-        ftr.addRow("b exterior (cm)", sbo)
-        ftr.addRow("h exterior (cm)", sho)
-        ftr.addRow("t pared (cm)", sto)
+        sbo = self._QDoubleSpinBox(); sbo.setRange(1e-6, 1e6); sbo.setValue(float(raw_sec.get("b", 12)))
+        sho = self._QDoubleSpinBox(); sho.setRange(1e-6, 1e6); sho.setValue(float(raw_sec.get("h", 12)))
+        sto = self._QDoubleSpinBox(); sto.setRange(1e-6, 1e6); sto.setValue(float(raw_sec.get("t", 0.5)))
+        sbo.setToolTip("Ancho exterior del tubo rectangular (cm)")
+        sho.setToolTip("Alto exterior del tubo rectangular (cm)")
+        sto.setToolTip("Espesor uniforme de pared (cm)")
+        ftr.addRow("b — ancho exterior (cm):", sbo)
+        ftr.addRow("h — alto exterior (cm):", sho)
+        ftr.addRow("t — espesor de pared (cm):", sto)
 
         sec_stack.addWidget(w_rect)
         sec_stack.addWidget(w_i)
@@ -2403,170 +2503,286 @@ class FtoolMainWindow(_QMainWindow):
 
         sec_type.currentIndexChanged.connect(_sync_sec_page)
         _sync_sec_page(sec_type.currentIndex())
-        fp.addRow("Forma", sec_type)
         fp.addRow(sec_stack)
 
-        # --- página manual (solo propiedades; el dibujo va en el panel derecho) ---
-        page_m = W()
-        vm = QVBoxLayout(page_m)
-        fw_man = W()
-        fm = self._QFormLayout(fw_man)
-        sA = self._QDoubleSpinBox()
-        sA.setRange(1e-12, 1e9)
-        sA.setValue(float(existing.get("A", 100)))
-        sIy = self._QDoubleSpinBox()
-        sIy.setRange(1e-12, 1e9)
-        sIy.setValue(float(existing.get("I_y", 833)))
-        sIz = self._QDoubleSpinBox()
-        sIz.setRange(1e-12, 1e9)
-        sIz.setValue(float(existing.get("I_z", 833)))
-        sJ = self._QDoubleSpinBox()
-        sJ.setRange(1e-12, 1e9)
-        sJ.setValue(float(existing.get("J", 1408)))
-        sG = self._QDoubleSpinBox()
-        sG.setRange(0.0, 1e9)
-        sG.setDecimals(4)
+        lbl_param_hint = self._QLabel(
+            "Nodux calcula A, I_y, I_z, J automaticamente a partir de estas dimensiones."
+        )
+        lbl_param_hint.setWordWrap(True)
+        lbl_param_hint.setObjectName("mutedLabel")
+        fp.addRow(lbl_param_hint)
+
+        sec_source_stack.addWidget(page_param)
+
+        # ── Sub-pagina C: Manual ──────────────────────────────────────
+        page_manual = W()
+        fm_vlay = QVBoxLayout(page_manual)
+        fm_vlay.setSpacing(6)
+        fm_vlay.setContentsMargins(0, 0, 0, 0)
+
+        page_man_props = W()
+        fm = self._QFormLayout(page_man_props)
+        fm.setSpacing(8)
+
+        sA = self._QDoubleSpinBox(); sA.setRange(1e-12, 1e9); sA.setValue(float(existing.get("A", 100)))
+        sIy = self._QDoubleSpinBox(); sIy.setRange(1e-12, 1e9); sIy.setValue(float(existing.get("I_y", 833)))
+        sIz = self._QDoubleSpinBox(); sIz.setRange(1e-12, 1e9); sIz.setValue(float(existing.get("I_z", 833)))
+        sJ = self._QDoubleSpinBox(); sJ.setRange(1e-12, 1e9); sJ.setValue(float(existing.get("J", 1408)))
+        sG = self._QDoubleSpinBox(); sG.setRange(0.0, 1e9); sG.setDecimals(4)
+        sA.setToolTip("Area de la seccion transversal (cm2)")
+        sIy.setToolTip("Momento de inercia alrededor del eje debil Y (cm4)")
+        sIz.setToolTip("Momento de inercia alrededor del eje fuerte Z (cm4)")
+        sJ.setToolTip("Constante de torsion (cm4)")
+        sG.setToolTip("Modulo de corte G (Tn/cm2). Dejar en 0 para calcular desde nu automaticamente.")
         if existing.get("G") is not None:
             sG.setValue(float(existing["G"]))
         else:
             sG.setValue(0.0)
-        fm.addRow("A (cm²)", sA)
-        fm.addRow("I_y (cm⁴)", sIy)
-        fm.addRow("I_z (cm⁴)", sIz)
-        fm.addRow("J (cm⁴)", sJ)
-        fm.addRow("G (Tn/cm²); si 0 se usa ν", sG)
-        vm.addWidget(fw_man)
-        vm.addStretch(0)
 
-        def _apply_catalog_to_material_fields(*_: Any) -> None:
-            row = _current_catalog_profile()
-            if not row:
-                return
-            mode.setCurrentIndex(1)
-            sA.setValue(float(row["A"]))
-            sIz.setValue(float(row["I_z"]))
-            sIy.setValue(float(row["I_y"]))
-            sJ.setValue(float(row["J"]))
-            _apply_catalog_dims(row)
-            _sync_viz_spin_enabled(chk_viz_global.isChecked())
+        fm.addRow("A — Area (cm2):", sA)
+        fm.addRow("I_y — Inercia debil (cm4):", sIy)
+        fm.addRow("I_z — Inercia fuerte (cm4):", sIz)
+        fm.addRow("J — Torsion (cm4):", sJ)
+        fm.addRow("G (Tn/cm2) — 0 = calcular desde nu:", sG)
+        fm_vlay.addWidget(page_man_props)
 
-        profile_design.currentIndexChanged.connect(_apply_catalog_to_material_fields)
-        profile_family.currentIndexChanged.connect(_apply_catalog_to_material_fields)
-        if _current_catalog_profile() is not None:
-            _apply_catalog_to_material_fields()
+        chk_draw_poly = self._QCheckBox("Dibujar perfil libre (opcional, para visualizacion 3D personalizada)")
+        chk_draw_poly.setChecked(bool(manual_poly_state))
+        fm_vlay.addWidget(chk_draw_poly)
 
-        stack.addWidget(page_p)
-        stack.addWidget(page_m)
-        try:
-            stack.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        except AttributeError:
-            stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-
-        manual_draw_panel = None
-
-        def _sync_mode(i: int) -> None:
-            stack.setCurrentIndex(0 if i == 0 else 1)
-            if manual_draw_panel is not None:
-                manual_draw_panel.setVisible(i == 1)
-
-        form.addRow(stack)
+        manual_draw_panel = W()
+        mdp_lay = QVBoxLayout(manual_draw_panel)
+        mdp_lay.setContentsMargins(0, 2, 0, 2)
+        mdp_lay.setSpacing(4)
 
         manual_ax = None
         manual_canvas = None
-        _ManFigCanvas = None
-        try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _ManFigCanvas
-        except ImportError:
-            try:
-                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _ManFigCanvas
-            except ImportError:
-                pass
-
-        right_w = W()
-        rv = QVBoxLayout(right_w)
-        rv.setSpacing(8)
-        lbl_prev_side = self._QLabel("Previsualización")
-        lbl_prev_side.setObjectName("mutedLabel")
-        rv.addWidget(lbl_prev_side)
-
-        preview_canvas = None
-        preview_fig = None
-
-        try:
-            from matplotlib.figure import Figure
-
-            try:
-                from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigCanvas
-            except ImportError:
-                from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as _FigCanvas
-
-            try:
-                from PySide6.QtWidgets import QSizePolicy as _QSP
-            except ImportError:
-                from PyQt5.QtWidgets import QSizePolicy as _QSP
-
-            from cli.section_preview import draw_material_preview
-
-            preview_fig = Figure(figsize=(4.2, 4.6), dpi=96)
-            preview_canvas = _FigCanvas(preview_fig)
-            preview_canvas.setMinimumWidth(300)
-            preview_canvas.setMinimumHeight(260)
-            preview_canvas.setMaximumHeight(420)
-            preview_canvas.setSizePolicy(_QSP.Preferred, _QSP.Preferred)
-            rv.addWidget(preview_canvas)
-        except ImportError:
-            pass
-
-        manual_draw_panel = W()
-        md_lay = QVBoxLayout(manual_draw_panel)
-        lbl_draw = self._QLabel(
-            "Dibujo de perfil (Y–Z, cm): clic izq. = vértice, clic der. = borrar último."
-        )
-        lbl_draw.setWordWrap(True)
-        md_lay.addWidget(lbl_draw)
-
         if _ManFigCanvas is not None:
             from matplotlib.figure import Figure as _ManFigure
-
-            _mfig = _ManFigure(figsize=(4.0, 3.6), dpi=96)
+            _mfig = _ManFigure(figsize=(3.2, 2.6), dpi=96)
             manual_canvas = _ManFigCanvas(_mfig)
             manual_ax = _mfig.add_subplot(111)
-            manual_canvas.setMinimumHeight(220)
-            manual_canvas.setMaximumHeight(320)
-            md_lay.addWidget(manual_canvas)
+            manual_canvas.setMinimumHeight(160)
+            manual_canvas.setMaximumHeight(240)
+            mdp_lay.addWidget(manual_canvas)
 
-        row_man = QHBoxLayout()
-        btn_poly_clear = QPushButton("Limpiar perfil")
-        btn_poly_area = QPushButton("Estimar A desde polígono")
-        row_man.addWidget(btn_poly_clear)
-        row_man.addWidget(btn_poly_area)
-        md_lay.addLayout(row_man)
+        lbl_draw = self._QLabel("Clic izquierdo = agregar vertice   |   Clic derecho = borrar ultimo")
+        lbl_draw.setObjectName("mutedLabel")
+        lbl_draw.setWordWrap(True)
+        mdp_lay.addWidget(lbl_draw)
 
-        manual_draw_panel.setVisible(mode.currentIndex() == 1)
-        rv.addWidget(manual_draw_panel)
+        row_poly_btns = QHBoxLayout()
+        btn_poly_clear = QPushButton("Limpiar poligono")
+        btn_poly_area = QPushButton("Estimar A desde poligono")
+        row_poly_btns.addWidget(btn_poly_clear)
+        row_poly_btns.addWidget(btn_poly_area)
+        mdp_lay.addLayout(row_poly_btns)
 
-        main_h.addWidget(left_w, stretch=52)
-        main_h.addWidget(right_w, stretch=48)
-        root_lay.addLayout(main_h)
+        fm_vlay.addWidget(manual_draw_panel)
+        manual_draw_panel.setVisible(chk_draw_poly.isChecked())
+        chk_draw_poly.toggled.connect(manual_draw_panel.setVisible)
 
-        mode.currentIndexChanged.connect(_sync_mode)
-        _sync_mode(mode.currentIndex())
+        sec_source_stack.addWidget(page_manual)
+        sec_source_stack.setCurrentIndex(src_idx)
 
-        def _manual_axes_limits_yz(
-            arr: np.ndarray,
-        ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-            """
-            Encuadre cuadrado en Y–Z con radio mínimo (cm) para que el primer clic
-            no encoja la vista a pocos milímetros.
-            """
+        # ════════════════════════════════════════════════════════════════
+        # PAGINA 3 — Forma visual en el visor 3D
+        # ════════════════════════════════════════════════════════════════
+        page3 = W()
+        p3_vlay = QVBoxLayout(page3)
+        p3_vlay.setSpacing(8)
+        p3_vlay.setContentsMargins(0, 4, 0, 4)
+
+        lbl_viz_intro = self._QLabel(
+            "El visor 3D dibuja cada barra con la forma del perfil en 3D.\n"
+            "Aca configurás qué dimensiones usa para esa representacion visual.\n\n"
+            "Nota: esto NO afecta el calculo estructural, solo la visualizacion."
+        )
+        lbl_viz_intro.setWordWrap(True)
+        p3_vlay.addWidget(lbl_viz_intro)
+
+        has_full_viz = all(k in ex_vz for k in ("h", "b", "tw", "tf"))
+        use_global_viz: bool
+        if "use_global" in ex_vz:
+            use_global_viz = bool(ex_vz["use_global"])
+        else:
+            use_global_viz = not has_full_viz
+
+        chk_viz_global = self._QCheckBox(
+            "Usar dimensiones globales del visor  (mismo perfil I para todas las barras con este material)"
+        )
+        chk_viz_global.setChecked(use_global_viz)
+        p3_vlay.addWidget(chk_viz_global)
+
+        viz_custom_panel = W()
+        fv = self._QFormLayout(viz_custom_panel)
+        fv.setSpacing(8)
+
+        vh = self._QDoubleSpinBox(); vh.setRange(1e-6, 1e6); vh.setDecimals(3)
+        vh.setValue(float(ex_vz.get("h", IPN_DEFAULT["h"])))
+        vb = self._QDoubleSpinBox(); vb.setRange(1e-6, 1e6); vb.setDecimals(3)
+        vb.setValue(float(ex_vz.get("b", IPN_DEFAULT["b"])))
+        vtf = self._QDoubleSpinBox(); vtf.setRange(1e-6, 1e6); vtf.setDecimals(3)
+        vtf.setValue(float(ex_vz.get("tf", IPN_DEFAULT["tf"])))
+        vhw = self._QDoubleSpinBox(); vhw.setRange(1e-6, 1e6); vhw.setDecimals(3)
+        vhw.setValue(float(ex_vz.get("hw", max(vh.value() - 2.0 * vtf.value(), 1e-6))))
+        vtw = self._QDoubleSpinBox(); vtw.setRange(1e-6, 1e6); vtw.setDecimals(3)
+        vtw.setValue(float(ex_vz.get("tw", IPN_DEFAULT["tw"])))
+
+        vh.setToolTip("Altura total del perfil visual (cm)")
+        vb.setToolTip("Ancho del patin del perfil visual (cm)")
+        vtf.setToolTip("Espesor del patin del perfil visual (cm)")
+        vhw.setToolTip("Altura del alma del perfil visual (cm)")
+        vtw.setToolTip("Espesor del alma del perfil visual (cm)")
+
+        fv.addRow("d — altura total (cm):", vh)
+        fv.addRow("bf — ancho de patin (cm):", vb)
+        fv.addRow("tf — espesor patin (cm):", vtf)
+        fv.addRow("hw — altura alma (cm):", vhw)
+        fv.addRow("tw — espesor alma (cm):", vtw)
+
+        lbl_viz_lock = self._QLabel(
+            "[Bloqueado por catalogo]  Las dimensiones visuales se toman del perfil elegido y no son editables."
+        )
+        lbl_viz_lock.setWordWrap(True)
+        lbl_viz_lock.setObjectName("mutedLabel")
+        lbl_viz_lock.setVisible(False)
+        fv.addRow(lbl_viz_lock)
+
+        p3_vlay.addWidget(viz_custom_panel)
+        p3_vlay.addStretch(1)
+
+        def _sync_viz_panel(checked: bool) -> None:
+            viz_custom_panel.setVisible(not checked)
+
+        chk_viz_global.toggled.connect(_sync_viz_panel)
+        _sync_viz_panel(chk_viz_global.isChecked())
+
+        wizard_stack.addWidget(page3)
+
+        # ════════════════════════════════════════════════════════════════
+        # PAGINA 4 — Resumen y confirmacion
+        # ════════════════════════════════════════════════════════════════
+        page4 = W()
+        p4_vlay = QVBoxLayout(page4)
+        p4_vlay.setSpacing(8)
+        p4_vlay.setContentsMargins(0, 4, 0, 4)
+
+        lbl_summary_title = self._QLabel("Revisa la configuracion antes de guardar:")
+        _fbold = _QFont(); _fbold.setBold(True)
+        lbl_summary_title.setFont(_fbold)
+        p4_vlay.addWidget(lbl_summary_title)
+
+        lbl_summary = self._QLabel("")
+        lbl_summary.setWordWrap(True)
+        lbl_summary.setTextFormat(
+            getattr(
+                getattr(self._Qt, "TextFormat", None) or self._Qt,
+                "RichText",
+                1,
+            )
+        )
+        p4_vlay.addWidget(lbl_summary)
+        p4_vlay.addStretch(1)
+
+        wizard_stack.addWidget(page4)
+
+        # ════════════════════════════════════════════════════════════════
+        # Helpers: catalogo
+        # ════════════════════════════════════════════════════════════════
+        def _current_catalog_profile() -> Optional[Dict[str, Any]]:
+            data = profile_design.currentData()
+            return data if isinstance(data, dict) else None
+
+        def _apply_catalog_dims_to_viz(row: Optional[Dict[str, Any]]) -> None:
+            if not row:
+                return
+            vh.setValue(float(row["d"]))
+            vb.setValue(float(row["bf"]))
+            vtf.setValue(float(row["tf"]))
+            vhw.setValue(float(row["hw"]))
+            vtw.setValue(float(row["tw"]))
+
+        def _update_catalog_labels(row: Optional[Dict[str, Any]]) -> None:
+            if row:
+                cat_A_lbl.setText(f"{row['A']:.3f}")
+                cat_Iy_lbl.setText(f"{row['I_y']:.2f}")
+                cat_Iz_lbl.setText(f"{row['I_z']:.2f}")
+                cat_J_lbl.setText(f"{row['J']:.4f}")
+            else:
+                for _lbl in (cat_A_lbl, cat_Iy_lbl, cat_Iz_lbl, cat_J_lbl):
+                    _lbl.setText("—")
+
+        def _populate_profile_designations() -> None:
+            fam = str(profile_family.currentData() or profile_family.currentText())
+            profile_design.blockSignals(True)
+            profile_design.clear()
+            if fam == "IPN":
+                profile_design.addItem("--- Elegir perfil IPN de la tabla ---", None)
+                for _row in ipn_catalog:
+                    profile_design.addItem(f"IPN {_row['designation']}", _row)
+                if saved_designation:
+                    ix_d = profile_design.findText(f"IPN {saved_designation}")
+                    if ix_d < 0:
+                        ix_d = profile_design.findText(saved_designation)
+                    if ix_d >= 0:
+                        profile_design.setCurrentIndex(ix_d)
+            else:
+                profile_design.addItem("Tabla pendiente para esta familia", None)
+            profile_design.blockSignals(False)
+            _row_now = _current_catalog_profile()
+            _update_catalog_labels(_row_now)
+            _apply_catalog_dims_to_viz(_row_now)
+            _sync_viz_fields_from_source()
+
+        def _sync_viz_fields_from_source() -> None:
+            """Bloquea/desbloquea campos de vista 3D segun modo y catalogo."""
+            src = str(source_combo.currentData())
+            row = _current_catalog_profile()
+            is_catalog_locked = src == "catalog" and row is not None
+            for _w in (vh, vb, vtf, vhw, vtw):
+                _w.setEnabled(not is_catalog_locked)
+            lbl_viz_lock.setVisible(is_catalog_locked)
+
+        def _on_catalog_selection_changed(*_: Any) -> None:
+            _row = _current_catalog_profile()
+            _update_catalog_labels(_row)
+            _apply_catalog_dims_to_viz(_row)
+            _sync_viz_fields_from_source()
+            _refresh_material_preview()
+
+        _SOURCE_HINTS = [
+            "Los valores A, I_y, I_z, J se toman directamente del catalogo y quedan bloqueados."
+            " No se pueden editar manualmente cuando hay perfil seleccionado.",
+            "Define las dimensiones geometricas de la seccion."
+            " Nodux calcula automaticamente A, I_y, I_z, J.",
+            "Ingresa las propiedades de la seccion directamente."
+            " Util para secciones no estandar o cuando ya tenes los valores calculados.",
+        ]
+
+        def _on_source_changed(idx: int) -> None:
+            sec_source_stack.setCurrentIndex(idx)
+            lbl_source_hint.setText(_SOURCE_HINTS[idx] if 0 <= idx < len(_SOURCE_HINTS) else "")
+            _sync_viz_fields_from_source()
+            _refresh_material_preview()
+
+        profile_family.currentIndexChanged.connect(_populate_profile_designations)
+        profile_design.currentIndexChanged.connect(_on_catalog_selection_changed)
+        source_combo.currentIndexChanged.connect(_on_source_changed)
+        # Nota: las llamadas iniciales se difieren hasta despues de definir
+        # `_refresh_material_preview` para evitar NameError en closures.
+
+        # ════════════════════════════════════════════════════════════════
+        # Canvas de poligono manual
+        # ════════════════════════════════════════════════════════════════
+        def _manual_axes_limits_yz(arr: np.ndarray) -> Tuple[Tuple[float, float], Tuple[float, float]]:
             min_radius = 12.0
             margin = 1.08
             if arr.size == 0:
                 return (-25.0, 25.0), (-25.0, 25.0)
             x0, x1 = float(np.min(arr[:, 0])), float(np.max(arr[:, 0]))
             y0, y1 = float(np.min(arr[:, 1])), float(np.max(arr[:, 1]))
-            cx = 0.5 * (x0 + x1)
-            cy = 0.5 * (y0 + y1)
+            cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
             half_x = max(0.5 * (x1 - x0), min_radius)
             half_y = max(0.5 * (y1 - y0), min_radius)
             r = max(half_x, half_y) * margin
@@ -2578,28 +2794,22 @@ class FtoolMainWindow(_QMainWindow):
             manual_ax.clear()
             manual_ax.set_facecolor("#ececec")
             manual_ax.grid(True, linestyle=":", alpha=0.6)
-            manual_ax.set_xlabel("Y local (cm)")
-            manual_ax.set_ylabel("Z local (cm)")
-            manual_ax.set_title("Dibujo de sección", fontsize=9, color="#2c3e50")
+            manual_ax.set_xlabel("Y (cm)")
+            manual_ax.set_ylabel("Z (cm)")
+            manual_ax.set_title("Perfil libre", fontsize=9, color="#2c3e50")
             if manual_poly_state:
                 arr = np.asarray(manual_poly_state, dtype=float)
                 if arr.shape[0] >= 1:
-                    manual_ax.plot(
-                        arr[:, 0], arr[:, 1], "o", color="#1b4f72", ms=7, zorder=3
-                    )
+                    manual_ax.plot(arr[:, 0], arr[:, 1], "o", color="#1b4f72", ms=6, zorder=3)
                 if arr.shape[0] >= 2:
-                    manual_ax.plot(
-                        arr[:, 0], arr[:, 1], "-", color="#1b4f72", lw=1.4, zorder=2
-                    )
+                    manual_ax.plot(arr[:, 0], arr[:, 1], "-", color="#1b4f72", lw=1.4, zorder=2)
                 if arr.shape[0] >= 3:
                     cl = np.vstack([arr, arr[:1]])
                     manual_ax.fill(cl[:, 0], cl[:, 1], alpha=0.35, color="#7fb3d5", zorder=1)
                 xlim, ylim = _manual_axes_limits_yz(arr)
-                manual_ax.set_xlim(xlim)
-                manual_ax.set_ylim(ylim)
+                manual_ax.set_xlim(xlim); manual_ax.set_ylim(ylim)
             else:
-                manual_ax.set_xlim(-25, 25)
-                manual_ax.set_ylim(-25, 25)
+                manual_ax.set_xlim(-25, 25); manual_ax.set_ylim(-25, 25)
             manual_ax.set_aspect("equal", adjustable="box")
             manual_canvas.draw()
 
@@ -2631,12 +2841,17 @@ class FtoolMainWindow(_QMainWindow):
         if manual_canvas is not None:
             manual_canvas.mpl_connect("button_press_event", on_manual_canvas_click)
 
+        # ════════════════════════════════════════════════════════════════
+        # Preview refresh
+        # ════════════════════════════════════════════════════════════════
         def _refresh_material_preview(*_: Any) -> None:
             if preview_fig is None or preview_canvas is None:
                 return
+            src = str(source_combo.currentData())
+            cat_profile = _current_catalog_profile() if src == "catalog" else None
             draw_material_preview(
                 preview_fig,
-                mode_is_param=mode.currentIndex() == 0,
+                mode_is_param=(src == "param"),
                 sec_index=int(sec_type.currentIndex()),
                 rect_b=float(sb.value()),
                 rect_h=float(sh.value()),
@@ -2654,132 +2869,234 @@ class FtoolMainWindow(_QMainWindow):
                 viz_b=float(vb.value()),
                 viz_tw=float(vtw.value()),
                 viz_tf=float(vtf.value()),
-                manual_polygon_yz=list(manual_poly_state)
-                if mode.currentIndex() == 1
-                else None,
+                manual_polygon_yz=list(manual_poly_state) if src == "manual" else None,
+                catalog_profile=cat_profile,
             )
             preview_canvas.draw()
 
         if preview_canvas is not None:
             _spin_refresh = (
-                sb,
-                sh,
-                si_h,
-                si_bf,
-                si_tw,
-                si_tf,
-                sD,
-                stwall,
-                sbo,
-                sho,
-                sto,
-                vh,
-                vb,
-                vtf,
-                vhw,
-                vtw,
-                sA,
-                sIy,
-                sIz,
-                sJ,
+                sb, sh, si_h, si_bf, si_tw, si_tf, sD, stwall,
+                sbo, sho, sto, vh, vb, vtf, vhw, vtw, sA, sIy, sIz, sJ,
             )
             for _sp in _spin_refresh:
                 _sp.valueChanged.connect(_refresh_material_preview)
             sec_type.currentIndexChanged.connect(_refresh_material_preview)
             profile_family.currentIndexChanged.connect(_refresh_material_preview)
             profile_design.currentIndexChanged.connect(_refresh_material_preview)
-            mode.currentIndexChanged.connect(_refresh_material_preview)
+            source_combo.currentIndexChanged.connect(_refresh_material_preview)
             chk_viz_global.toggled.connect(_refresh_material_preview)
-            _refresh_material_preview()
+
+        # Inicializacion diferida: ahora que `_refresh_material_preview` ya
+        # esta definido, podemos disparar las callbacks iniciales sin NameError.
+        _populate_profile_designations()
+        _on_source_changed(src_idx)
+
         redraw_manual_canvas()
 
-        DBB = self._QDialogButtonBox
-        bb = DBB(DBB.StandardButton.Ok | DBB.StandardButton.Cancel)
-        root_lay.addWidget(bb)
-        bb.accepted.connect(D.accept)
-        bb.rejected.connect(D.reject)
+        # ════════════════════════════════════════════════════════════════
+        # Resumen
+        # ════════════════════════════════════════════════════════════════
+        def _build_summary() -> str:
+            nm_s = name_edit.text().strip() or "(sin nombre)"
+            src_s = str(source_combo.currentData())
+            lines = [
+                f"<b>Material:</b> {nm_s}",
+                (
+                    f"<b>E:</b> {s_e.value():.1f} Tn/cm2 &nbsp; "
+                    f"<b>nu:</b> {s_nu.value():.3f} &nbsp; "
+                    f"<b>gamma:</b> {s_ga.value():.5f} Tn/cm3"
+                ),
+                "",
+            ]
+            if src_s == "catalog":
+                _row = _current_catalog_profile()
+                if _row:
+                    fam_s = str(profile_family.currentData() or profile_family.currentText())
+                    des_s = str(_row.get("designation", ""))
+                    lines.append(f"<b>Seccion:</b> Catalogo — {fam_s} {des_s}")
+                    lines.append(
+                        f"A = {_row['A']:.3f} cm2  |  "
+                        f"I_y = {_row['I_y']:.2f} cm4  |  "
+                        f"I_z = {_row['I_z']:.2f} cm4  |  "
+                        f"J = {_row['J']:.4f} cm4"
+                    )
+                else:
+                    lines.append("<b>[Atencion]</b> No hay perfil de catalogo seleccionado.")
+            elif src_s == "param":
+                _i = sec_type.currentIndex()
+                _shape = sec_map[_i][0] if 0 <= _i < len(sec_map) else "?"
+                lines.append(f"<b>Seccion:</b> Parametrica — {_shape}")
+                lines.append("(A, I_y, I_z, J calculados automaticamente al guardar)")
+            else:
+                lines.append(
+                    f"<b>Seccion:</b> Manual — "
+                    f"A = {sA.value():.3f} cm2  |  "
+                    f"I_y = {sIy.value():.3f} cm4  |  "
+                    f"I_z = {sIz.value():.3f} cm4  |  "
+                    f"J = {sJ.value():.4f} cm4"
+                )
+                if sG.value() > 0:
+                    lines.append(f"G = {sG.value():.4f} Tn/cm2")
+                if manual_poly_state and chk_draw_poly.isChecked():
+                    lines.append(f"Perfil libre dibujado: {len(manual_poly_state)} vertices")
+            lines.append("")
+            if chk_viz_global.isChecked():
+                lines.append("<b>Vista 3D:</b> Dimensiones globales del visor")
+            else:
+                lines.append(
+                    f"<b>Vista 3D:</b> d = {vh.value():.1f}  bf = {vb.value():.1f}  "
+                    f"tf = {vtf.value():.1f}  tw = {vtw.value():.1f} cm"
+                )
+            return "<br>".join(lines)
+
+        # ════════════════════════════════════════════════════════════════
+        # Navegacion del asistente
+        # ════════════════════════════════════════════════════════════════
+        STEP_TITLES = [
+            "Paso 1 de 4  —  Identificacion y propiedades elasticas",
+            "Paso 2 de 4  —  Definicion de la seccion",
+            "Paso 3 de 4  —  Forma visual en el visor 3D",
+            "Paso 4 de 4  —  Resumen y confirmacion",
+        ]
+        STEP_HINTS = [
+            "Define el nombre del material y sus propiedades elasticas basicas.",
+            "Elegi como vas a definir la seccion transversal: desde el catalogo, por dimensiones o manualmente.",
+            "Configura como se va a ver el perfil en el visor 3D (no afecta el calculo).",
+            "Revisa todo antes de guardar. Podes volver atras para corregir.",
+        ]
+
+        def _go_to_step(step: int) -> None:
+            wizard_stack.setCurrentIndex(step)
+            lbl_step.setText(STEP_TITLES[step])
+            lbl_step_hint.setText(STEP_HINTS[step])
+            btn_back.setEnabled(step > 0)
+            btn_next.setVisible(step < 3)
+            btn_save.setVisible(step == 3)
+            if step == 3:
+                lbl_summary.setText(_build_summary())
+            _refresh_material_preview()
+
+        def _validate_current_step() -> Optional[str]:
+            step = wizard_stack.currentIndex()
+            if step == 0:
+                if not name_edit.text().strip():
+                    return "El nombre del material no puede estar vacio."
+            elif step == 1:
+                src_v = str(source_combo.currentData())
+                if src_v == "catalog" and _current_catalog_profile() is None:
+                    return "Selecciona un perfil de la tabla antes de continuar."
+            return None
+
+        def _on_next() -> None:
+            err = _validate_current_step()
+            if err:
+                self._QMessageBox.warning(D, "Completar paso", err)
+                return
+            _go_to_step(wizard_stack.currentIndex() + 1)
+
+        def _on_back() -> None:
+            curr = wizard_stack.currentIndex()
+            if curr > 0:
+                _go_to_step(curr - 1)
+
+        btn_next.clicked.connect(_on_next)
+        btn_back.clicked.connect(_on_back)
+        btn_cancel.clicked.connect(D.reject)
+        btn_save.clicked.connect(D.accept)
+
+        _go_to_step(0)
+
+        # ════════════════════════════════════════════════════════════════
+        # Mostrar dialogo y guardar
+        # ════════════════════════════════════════════════════════════════
         if self._dialog_accepted(D) is False:
             return
 
         nm = name_edit.text().strip()
         if not nm:
-            self._QMessageBox.warning(self, "Material", "El nombre no puede estar vacío.")
+            self._QMessageBox.warning(self, "Material", "El nombre no puede estar vacio.")
             return
         if edit_name is None and nm in mats:
             r = self._QMessageBox.question(
                 self,
                 "Material",
-                f"Ya existe «{nm}». ¿Sobrescribir?",
+                f"Ya existe \u00ab{nm}\u00bb. \u00bfSobrescribir?",
                 _msg_yes_no_flags(self._QMessageBox),
             )
             if not _msg_is_yes(self._QMessageBox, r):
                 return
 
-        selected_catalog_profile = _current_catalog_profile()
-        if selected_catalog_profile is not None:
-            _apply_catalog_to_material_fields()
-
+        src = str(source_combo.currentData())
+        selected_catalog_profile = _current_catalog_profile() if src == "catalog" else None
         entry: Dict[str, Any] = {"E": s_e.value(), "gamma": s_ga.value()}
 
-        sec_keys = ["rectangle", "i_beam", "tube_circle", "tube_rect"]
-        si = sec_type.currentIndex()
-        k = sec_keys[si] if 0 <= si < len(sec_keys) else "rectangle"
-        is_param = mode.currentIndex() == 0
-
-        if is_param:
-            entry.pop("profile_polygon_yz", None)
+        if src == "param":
             entry["nu"] = s_nu.value()
-            idx = sec_type.currentIndex()
-            sec_stack.setCurrentIndex(idx)
+            entry.pop("catalog", None)
+            entry.pop("profile_polygon_yz", None)
+            idx_s = sec_type.currentIndex()
+            k_s = ["rectangle", "i_beam", "tube_circle", "tube_rect"]
+            k = k_s[idx_s] if 0 <= idx_s < len(k_s) else "rectangle"
             if k == "rectangle":
                 entry["section"] = {"type": "rectangle", "b": sb.value(), "h": sh.value()}
             elif k == "i_beam":
                 entry["section"] = {
                     "type": "i_beam",
-                    "h": si_h.value(),
-                    "bf": si_bf.value(),
-                    "tw": si_tw.value(),
-                    "tf": si_tf.value(),
+                    "h": si_h.value(), "bf": si_bf.value(),
+                    "tw": si_tw.value(), "tf": si_tf.value(),
                 }
             elif k == "tube_circle":
                 entry["section"] = {"type": "tube_circle", "D": sD.value(), "t": stwall.value()}
             else:
                 entry["section"] = {
                     "type": "tube_rect",
-                    "b": sbo.value(),
-                    "h": sho.value(),
-                    "t": sto.value(),
+                    "b": sbo.value(), "h": sho.value(), "t": sto.value(),
                 }
             try:
                 _resolve_material_stiffness(entry, nm)
             except Exception as ex:
                 self._QMessageBox.critical(self, "Material", str(ex))
                 return
-        else:
+
+        elif src == "catalog":
             entry.pop("section", None)
+            entry.pop("profile_polygon_yz", None)
+            entry["nu"] = s_nu.value()
             if selected_catalog_profile is not None:
+                fam_str = str(profile_family.currentData() or profile_family.currentText())
                 entry["catalog"] = {
-                    "family": "IPN",
+                    "family": fam_str,
                     "designation": str(selected_catalog_profile["designation"]),
                 }
                 entry["A"] = float(selected_catalog_profile["A"])
                 entry["I_y"] = float(selected_catalog_profile["I_y"])
                 entry["I_z"] = float(selected_catalog_profile["I_z"])
                 entry["J"] = float(selected_catalog_profile["J"])
-            else:
-                entry.pop("catalog", None)
-                entry["A"] = sA.value()
-                entry["I_y"] = sIy.value()
-                entry["I_z"] = sIz.value()
-                entry["J"] = sJ.value()
+            try:
+                _resolve_material_stiffness(dict(entry), nm)
+            except Exception as ex:
+                self._QMessageBox.critical(self, "Material", str(ex))
+                return
+
+        else:  # manual
+            entry.pop("section", None)
+            entry.pop("catalog", None)
+            entry["A"] = sA.value()
+            entry["I_y"] = sIy.value()
+            entry["I_z"] = sIz.value()
+            entry["J"] = sJ.value()
             Gv = sG.value()
             if Gv > 0:
                 entry["G"] = Gv
             else:
                 entry["nu"] = s_nu.value()
-            pp_save = _norm_poly(manual_poly_state)
-            if pp_save:
-                entry["profile_polygon_yz"] = pp_save
+            if chk_draw_poly.isChecked():
+                pp_save = _norm_poly(manual_poly_state)
+                if pp_save:
+                    entry["profile_polygon_yz"] = pp_save
+                else:
+                    entry.pop("profile_polygon_yz", None)
             else:
                 entry.pop("profile_polygon_yz", None)
             try:

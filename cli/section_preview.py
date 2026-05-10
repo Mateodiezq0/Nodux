@@ -32,10 +32,15 @@ def draw_material_preview(
     viz_tw: float,
     viz_tf: float,
     manual_polygon_yz: Optional[list] = None,
+    catalog_profile: Optional[dict] = None,
 ) -> None:
     """
     Dibuja dos paneles: sección paramétrica (cálculo) y contorno IPN de vista 3D.
     ``sec_index``: 0 rect, 1 I, 2 tubo circular, 3 tubo rectangular.
+
+    Si ``catalog_profile`` viene seteado con un perfil válido del catálogo
+    (dict con ``family``, ``d``, ``bf``, ``tf``, ``tw``), manda sobre ambos
+    paneles y dibuja la forma real del perfil ignorando modo/viz globales.
     """
     fig.clf()
     ax_s = fig.add_subplot(2, 1, 1)
@@ -43,6 +48,11 @@ def draw_material_preview(
     for ax in (ax_s, ax_v):
         ax.set_facecolor("#ececec")
         ax.grid(True, linestyle=":", alpha=0.6)
+
+    if _catalog_profile_valid(catalog_profile):
+        _render_catalog_panels(ax_s, ax_v, catalog_profile)
+        fig.subplots_adjust(hspace=0.35, left=0.12, right=0.95, top=0.93, bottom=0.08)
+        return
 
     sec_keys = ["rectangle", "i_beam", "tube_circle", "tube_rect"]
 
@@ -235,3 +245,136 @@ def _draw_ipn_outline(ax: Any, h: float, b: float, tw: float, tf: float) -> None
     if min(h, b, tw, tf) <= 0 or tw >= b or 2 * tf >= h:
         raise ValueError("ipn")
     _draw_i_beam(ax, h, b, tw, tf)
+
+
+def _draw_ipn_tapered(
+    ax: Any,
+    d: float,
+    bf: float,
+    tw: float,
+    tf: float,
+    *,
+    taper: float = 0.14,
+) -> None:
+    """
+    Contorno IPN con alas trapezoidales (cara interior inclinada ~14%).
+    ``tf`` se interpreta como espesor medio del ala, en la mitad del voladizo
+    (convención de tablas IPN). Si los parámetros son inválidos lanza ValueError.
+    """
+    d, bf, tw, tf = float(d), float(bf), float(tw), float(tf)
+    if min(d, bf, tw, tf) <= 0 or tw >= bf:
+        raise ValueError("ipn_tapered")
+    overhang = max((bf - tw) / 2.0, 0.0)
+    delta = 0.5 * taper * overhang
+    tf_tip = max(tf - delta, 0.1 * tf)
+    tf_root = tf + delta
+    tf_root = min(tf_root, 0.45 * d)
+    tf_tip = min(tf_tip, tf_root)
+
+    zt = d / 2.0
+    zb = -d / 2.0
+    xL, xR = -bf / 2.0, bf / 2.0
+    xm = tw / 2.0
+    pts = [
+        [xL, zt],
+        [xR, zt],
+        [xR, zt - tf_tip],
+        [xm, zt - tf_root],
+        [xm, zb + tf_root],
+        [xR, zb + tf_tip],
+        [xR, zb],
+        [xL, zb],
+        [xL, zb + tf_tip],
+        [-xm, zb + tf_root],
+        [-xm, zt - tf_root],
+        [xL, zt - tf_tip],
+    ]
+    arr = np.array(pts, dtype=float)
+    ax.fill(
+        arr[:, 0],
+        arr[:, 1],
+        facecolor="#aed6f1",
+        edgecolor="#1b4f72",
+        lw=1.2,
+        closed=True,
+    )
+    lim = max(bf, d) * 0.65
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+
+
+def _catalog_profile_valid(cat: Optional[dict]) -> bool:
+    """Valida que el perfil del catálogo tenga las claves mínimas para dibujarse."""
+    if not isinstance(cat, dict):
+        return False
+    fam = str(cat.get("family", "")).strip().upper()
+    if not fam:
+        return False
+    if fam == "IPN":
+        try:
+            d = float(cat.get("d", 0.0))
+            bf = float(cat.get("bf", 0.0))
+            tw = float(cat.get("tw", 0.0))
+            tf = float(cat.get("tf", 0.0))
+        except (TypeError, ValueError):
+            return False
+        return min(d, bf, tw, tf) > 0 and tw < bf
+    return True
+
+
+def _render_catalog_panels(ax_s: Any, ax_v: Any, cat: dict) -> None:
+    """Dibuja el perfil de catálogo en ambos paneles, con títulos coherentes."""
+    fam = str(cat.get("family", "")).strip().upper()
+    desig = str(cat.get("designation", "")).strip()
+    label = f"{fam} {desig}".strip() if desig else fam
+
+    if fam == "IPN":
+        for ax, title_prefix in (
+            (ax_s, "Catálogo"),
+            (ax_v, "Vista 3D (perfil)"),
+        ):
+            try:
+                _draw_ipn_tapered(
+                    ax,
+                    float(cat["d"]),
+                    float(cat["bf"]),
+                    float(cat["tw"]),
+                    float(cat["tf"]),
+                )
+                ax.set_title(f"{title_prefix}: {label}", fontsize=9, color="#2c3e50")
+                ax.set_xlabel("Y (cm)")
+                ax.set_ylabel("Z (cm)")
+                ax.set_aspect("equal", adjustable="box")
+            except (ValueError, ZeroDivisionError, TypeError):
+                ax.clear()
+                ax.set_facecolor("#ececec")
+                ax.text(
+                    0.5,
+                    0.5,
+                    f"Perfil {label}: parámetros inválidos",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    color="#a93226",
+                )
+                ax.set_xticks([])
+                ax.set_yticks([])
+        return
+
+    for ax, title_prefix in (
+        (ax_s, "Catálogo"),
+        (ax_v, "Vista 3D (perfil)"),
+    ):
+        ax.text(
+            0.5,
+            0.55,
+            f"Forma {fam}\naún no disponible",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            fontsize=10,
+            color="#555",
+        )
+        ax.set_title(f"{title_prefix}: {label}", fontsize=9, color="#2c3e50")
+        ax.set_xticks([])
+        ax.set_yticks([])
