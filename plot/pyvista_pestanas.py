@@ -68,6 +68,59 @@ def _nodo_dof6_visual(nodo: Any, D: np.ndarray, factor: float) -> np.ndarray:
     return np.zeros(6, dtype=float)
 
 
+def _merge_polydata_list_fast(meshes: List["pv.PolyData"]) -> "pv.PolyData":
+    """Une muchas PolyData en una sola pasada VTK (mucho más rápido que merge encadenado)."""
+    _require_pyvista()
+    non_empty = [m for m in meshes if m is not None and m.n_points > 0]
+    if not non_empty:
+        return pv.PolyData()
+    if len(non_empty) == 1:
+        return non_empty[0]
+    try:
+        from vtkmodules.vtkFiltersCore import vtkAppendPolyData
+    except ImportError:  # pragma: no cover
+        import vtk as _vtk
+
+        vtkAppendPolyData = _vtk.vtkAppendPolyData
+    app = vtkAppendPolyData()
+    for m in non_empty:
+        app.AddInputData(m)
+    app.MergePointsOff()
+    app.Update()
+    return pv.wrap(app.GetOutput())
+
+
+def _polydata_from_quad_stack(
+    quads: List[np.ndarray], mag_per_quad: List[float]
+) -> "pv.PolyData":
+    """
+    Una sola PolyData con todas las caras cuadriláteras (4 vértices duplicados por cara).
+    Evita miles de ``merge``/append VTK; misma geometría que un quad por malla.
+    """
+    _require_pyvista()
+    nq = len(quads)
+    if nq == 0:
+        return pv.PolyData()
+    if len(mag_per_quad) != nq:
+        raise ValueError("quads y mag_per_quad deben tener la misma longitud")
+    pts = np.empty((4 * nq, 3), dtype=np.float64)
+    faces = np.empty(5 * nq, dtype=np.int64)
+    scalars = np.empty(4 * nq, dtype=np.float64)
+    row = 0
+    fi = 0
+    for i, q in enumerate(quads):
+        qf = np.asarray(q, dtype=np.float64).reshape(4, 3)
+        pts[row : row + 4, :] = qf
+        mag = float(mag_per_quad[i])
+        scalars[row : row + 4] = mag
+        faces[fi : fi + 5] = (4, row, row + 1, row + 2, row + 3)
+        row += 4
+        fi += 5
+    mesh = pv.PolyData(pts, faces)
+    mesh.point_data["def_disp_mag"] = scalars
+    return mesh
+
+
 def _centroid_disp_local_bern(x: float, L: float, ul: np.ndarray) -> np.ndarray:
     """Eje barra en locales: axial lineal + flexión Hermite (orden GDL de ``Barra._calcular_K_local``)."""
     if L < 1e-18:
@@ -140,12 +193,19 @@ def build_ipn_mesh_deformada_curva(
         z_ref = np.asarray(barra.z_local, dtype=float).ravel()[:3]
         ns = int(max(10, min(40, round(Lbar / 30.0 * 12))))
         xs = np.linspace(0.0, Lbar, ns + 1, dtype=float)
-        poly: List[np.ndarray] = []
+        RT = np.asarray(R.T, dtype=float)
+        inv_L = 1.0 / Lbar if Lbar > 1e-18 else 0.0
+        poly_list: List[np.ndarray] = []
+        mag_list: List[float] = []
         for xk in xs:
-            r0 = Gi + (float(xk) / Lbar) * vec
-            dloc = _centroid_disp_local_bern(float(xk), Lbar, ul)
-            poly.append(r0 + R.T @ dloc)
-        poly_a = np.array(poly, dtype=float)
+            fk = float(xk)
+            r0 = Gi + fk * inv_L * vec
+            dloc = _centroid_disp_local_bern(fk, Lbar, ul)
+            dglob = RT @ dloc
+            poly_list.append(r0 + dglob)
+            mag_list.append(float(np.linalg.norm(dglob)))
+        poly_a = np.array(poly_list, dtype=float)
+        mags = np.array(mag_list, dtype=float)
         pts_prof = None
         if profile_polygon_yz_per_bar_id is not None and bid_int is not None:
             raw_poly = profile_polygon_yz_per_bar_id.get(bid_int)
@@ -161,6 +221,7 @@ def build_ipn_mesh_deformada_curva(
             from plot.profile_extrude import extrude_polygon_yz_prism
 
             P = pts_prof[:, :2] * float(escala_seccion)
+            prisms_bar: List["pv.PolyData"] = []
             for seg in range(ns):
                 origin = poly_a[seg]
                 vend = poly_a[seg + 1] - origin
@@ -172,7 +233,17 @@ def build_ipn_mesh_deformada_curva(
                     P, Lseg, origin, x_loc, y_loc, z_loc
                 )
                 if mseg.n_points > 0:
-                    meshes.append(mseg)
+                    mag_seg = float(0.5 * (mags[seg] + mags[seg + 1]))
+                    mseg.point_data["def_disp_mag"] = np.full(
+                        mseg.n_points, mag_seg, dtype=float
+                    )
+                    prisms_bar.append(mseg)
+            if prisms_bar:
+                meshes.append(
+                    prisms_bar[0]
+                    if len(prisms_bar) == 1
+                    else _merge_polydata_list_fast(prisms_bar)
+                )
             continue
 
         custom_ipn = (
@@ -191,21 +262,32 @@ def build_ipn_mesh_deformada_curva(
         ):
             Ro = float(tube_outer_radius_per_bar_id[bid_int]) * float(escala_seccion)
             if poly_a.shape[0] >= 2:
-                meshes.append(
-                    pv.lines_from_points(poly_a).tube(
-                        radius=max(Ro, 1e-12), n_sides=48
+                line_tube = pv.lines_from_points(poly_a)
+                line_tube.point_data["def_disp_mag"] = np.asarray(
+                    mags, dtype=float
+                ).copy()
+                tubed = line_tube.tube(radius=max(Ro, 1e-12), n_sides=48)
+                if "def_disp_mag" not in tubed.point_data and tubed.n_points > 0:
+                    tubed.point_data["def_disp_mag"] = np.full(
+                        tubed.n_points,
+                        float(np.mean(mags)),
+                        dtype=float,
                     )
-                )
+                if tubed.n_points > 0:
+                    meshes.append(tubed)
             continue
         else:
             h, b, tw, tf = _dims_perfil_ipn(ipn_dims, escala_seccion)
 
+        quads_bar: List[np.ndarray] = []
+        mag_bar: List[float] = []
         for seg in range(ns):
             origin = poly_a[seg]
             vend = poly_a[seg + 1] - origin
             Lseg = float(np.linalg.norm(vend))
             if Lseg < 1e-10:
                 continue
+            mag_seg = float(0.5 * (mags[seg] + mags[seg + 1]))
             x_loc, y_loc, z_loc = _terna_seccion_desde_cuerda(vend, y_ref, z_ref)
             boxes_seg = [
                 (0.0, Lseg, -b / 2.0, b / 2.0, h / 2.0 - tf, h / 2.0),
@@ -215,10 +297,16 @@ def build_ipn_mesh_deformada_curva(
             for xa, xb, y0, y1, z0, z1 in boxes_seg:
                 for face in _box_faces_local(xa, xb, y0, y1, z0, z1):
                     g = _local_to_global(face, origin, x_loc, y_loc, z_loc)
-                    meshes.append(_quad_to_polydata(np.array(g, dtype=float)))
+                    quads_bar.append(np.asarray(g, dtype=np.float64))
+                    mag_bar.append(mag_seg)
+        if quads_bar:
+            meshes.append(_polydata_from_quad_stack(quads_bar, mag_bar))
     if not meshes:
         return pv.PolyData()
-    return meshes[0].merge(meshes[1:]) if len(meshes) > 1 else meshes[0]
+    try:
+        return _merge_polydata_list_fast(meshes)
+    except Exception:
+        return meshes[0].merge(meshes[1:]) if len(meshes) > 1 else meshes[0]
 
 
 def _collect_escalonado_franja_quads(
@@ -1160,6 +1248,8 @@ def _populate_deformada(
     tube_outer_radius_per_bar_id: Optional[Dict[int, float]] = None,
     profile_polygon_yz_per_bar_id: Optional[Dict[int, Any]] = None,
     viewport_style: Optional[Mapping[str, Any]] = None,
+    *,
+    deformation_colormap: bool = False,
 ) -> None:
     g = _escala_intrinseca_deformacion(barras, nodos_dict, D)
     disp = float(escala_diagrama_slider) * g
@@ -1196,14 +1286,36 @@ def _populate_deformada(
         else:
             d_mc, d_ec = "#2980b9", "#1a5276"
             lw_ipn = 1.0
-        plotter.add_mesh(
-            ipn,
-            color=d_mc,
-            opacity=0.92,
-            show_edges=True,
-            edge_color=d_ec,
-            line_width=lw_ipn,
-        )
+        use_cmap = bool(deformation_colormap) and "def_disp_mag" in ipn.point_data
+        if use_cmap:
+            arr = np.asarray(ipn.point_data["def_disp_mag"], dtype=float).ravel()
+            lo, hi = float(np.min(arr)), float(np.max(arr))
+            cmap_kw: Dict[str, Any] = {
+                "scalars": "def_disp_mag",
+                "cmap": "turbo",
+                "show_scalar_bar": True,
+                "scalar_bar_args": {
+                    "title": "|u| visual (cm)",
+                    "vertical": True,
+                    "fmt": "%.4g",
+                },
+                "opacity": 0.92,
+                "show_edges": True,
+                "edge_color": d_ec,
+                "line_width": lw_ipn,
+            }
+            if hi - lo < 1e-14:
+                cmap_kw["clim"] = [0.0, max(1e-12, hi)]
+            plotter.add_mesh(ipn, **cmap_kw)
+        else:
+            plotter.add_mesh(
+                ipn,
+                color=d_mc,
+                opacity=0.92,
+                show_edges=True,
+                edge_color=d_ec,
+                line_width=lw_ipn,
+            )
     _add_terna_global(plotter, longitud_terna)
     if mostrar_ejes_locales:
         h, b_dim, _, _ = _dims_perfil_ipn(ipn_dims, escala_seccion)
@@ -1478,6 +1590,7 @@ def build_ftool_legend_lines(view_key: str, escala: float) -> List[str]:
         return [
             "Deformada · desplazamientos en cm",
             f"Amplificación visual (slider) = {escala:.2f}",
+            "G: mapa de color por |u| visual (más / menos deformación) — alternar",
             ctrl,
         ]
     if view_key in ("vy", "vz", "nx", "my", "mz", "mx"):

@@ -427,6 +427,7 @@ class FtoolMainWindow(_QMainWindow):
         self._ftool_preserve_camera = False
         self._escala_diagrama = 1.0
         self._escala_deform = 1.0
+        self._deform_colormap_enabled = True
         self._ipn_dims = IPN_DEFAULT.copy()
         self._longitud_vector = 45.0
         self._history_limit = 5
@@ -1025,6 +1026,16 @@ class FtoolMainWindow(_QMainWindow):
                     pass
             _t_vp_sc.activated.connect(self._on_shortcut_cycle_viewport_theme)
 
+            _g_def_sc = QShortcut(QKeySequence(Qt.Key_G), self)
+            try:
+                _g_def_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            except AttributeError:
+                try:
+                    _g_def_sc.setContext(Qt.WindowShortcut)
+                except Exception:
+                    pass
+            _g_def_sc.activated.connect(self._on_toggle_deform_colormap)
+
             _res_pgdn = QShortcut(QKeySequence("Ctrl+PgDown"), self)
             _res_pgup = QShortcut(QKeySequence("Ctrl+PgUp"), self)
             for _sc in (_res_pgdn, _res_pgup):
@@ -1042,6 +1053,7 @@ class FtoolMainWindow(_QMainWindow):
 
         try:
             self._plotter.add_key_event("t", lambda: self._cycle_viewport_theme())
+            self._plotter.add_key_event("g", lambda *_: self._on_toggle_deform_colormap())
         except Exception:
             pass
 
@@ -1353,6 +1365,29 @@ class FtoolMainWindow(_QMainWindow):
         if self._workspace_stack.currentIndex() != self._IDX_WORKSPACE_3D:
             return
         self._cycle_viewport_theme()
+
+    def _on_toggle_deform_colormap(self) -> None:
+        import time
+
+        now = time.monotonic()
+        if now - float(getattr(self, "_last_def_cmap_ts", 0.0)) < 0.15:
+            return
+        self._last_def_cmap_ts = now
+        self._deform_colormap_enabled = not self._deform_colormap_enabled
+        key = str(self._combo_vista.currentData() or "")
+        if (
+            key == "def"
+            and self._workspace_stack.currentIndex() == self._IDX_WORKSPACE_3D
+        ):
+            self._redraw()
+        self.statusBar().showMessage(
+            "Deformada: color por |u| visual "
+            + (
+                "activado (G: apagar)"
+                if self._deform_colormap_enabled
+                else "desactivado (G: encender)"
+            )
+        )
 
     def _apply_viewport_background(self) -> None:
         """Fondo del visor 3D según el tema de color del visor (independiente del tema Qt)."""
@@ -2922,6 +2957,9 @@ class FtoolMainWindow(_QMainWindow):
         if event.key() == self._Qt.Key_Delete:
             self._on_delete_selection()
             return True
+        if event.key() == self._Qt.Key_G:
+            self._on_toggle_deform_colormap()
+            return True
         return False
 
     def _on_escape_deselect_bar(self) -> None:
@@ -3103,6 +3141,7 @@ class FtoolMainWindow(_QMainWindow):
                     tube_outer_radius_per_bar_id=tube_bar,
                     profile_polygon_yz_per_bar_id=profile_bar,
                     viewport_style=vp_style,
+                    deformation_colormap=self._deform_colormap_enabled,
                 )
             elif key == "vy":
                 self._hover_state["hover"] = _populate_corte(
