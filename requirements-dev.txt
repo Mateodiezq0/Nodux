@@ -1,0 +1,6 @@
+# Dependencias para desarrollo y tests locales.
+#   pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest>=7.0.0

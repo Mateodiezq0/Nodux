@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<VTKFile type="vtkMultiBlockDataSet" version="1.0" byte_order="LittleEndian" header_type="UInt32" compressor="vtkZLibDataCompressor">
+  <vtkMultiBlockDataSet>
+    <DataSet index="0" name="ipn_estructura" file="supertesteo_paraview/supertesteo_paraview_0.vtp"/>
+    <DataSet index="1" name="mz_franja_pos" file="supertesteo_paraview/supertesteo_paraview_1.vtp"/>
+    <DataSet index="2" name="mz_franja_neg" file="supertesteo_paraview/supertesteo_paraview_2.vtp"/>
+    <DataSet index="3" name="mz_franja_zero" file="supertesteo_paraview/supertesteo_paraview_3.vtp"/>
+    <DataSet index="4" name="mz_borde_pos" file="supertesteo_paraview/supertesteo_paraview_4.vtp"/>
+    <DataSet index="5" name="mz_borde_neg" file="supertesteo_paraview/supertesteo_paraview_5.vtp"/>
+    <DataSet index="6" name="mz_borde_zero" file="supertesteo_paraview/supertesteo_paraview_6.vtp"/>
+    <DataSet index="7" name="referencia" file="supertesteo_paraview/supertesteo_paraview_7.vtp"/>
+    <DataSet index="8" name="nodos" file="supertesteo_paraview/supertesteo_paraview_8.vtp"/>
+  </vtkMultiBlockDataSet>
+</VTKFile>

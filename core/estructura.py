@@ -64,24 +64,24 @@ class Estructura:
                   #f" (ESTO ES LO QUE QUIERO VER DEL ENSAMBLE FINAL {idx_j}:{idx_j+6})")
         
         for carga_nodal in self.cargas_nodales:
-            print(vector_global)
             nodo_id = (carga_nodal.nodo_id - 1) * dof_por_nodo
             carga = carga_nodal.vector()
+            print(
+                f"\n[Ensamble F global] Carga nodal en nodo {carga_nodal.nodo_id} "
+                f"(DOFs globales {nodo_id} a {nodo_id + 5})"
+            )
+            print(
+                f"  Incremento [Fx,Fy,Fz,Mx,My,Mz] = "
+                f"[{carga[0]}, {carga[1]}, {carga[2]}, {carga[3]}, {carga[4]}, {carga[5]}]"
+            )
             vector_global[nodo_id:nodo_id+6] += carga
-            print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-            print()
-            print(f"Carga nodal en nodo {carga_nodal.nodo_id}: {carga} {nodo_id}:{nodo_id+6}")
-            print(vector_global)
+            print(f"  Vector F global completo tras sumar: {vector_global}")
 
         self.vector_nodal_equivalente = vector_global
         #print("Vector nodal equivalente (global): IMPORTANTISIMO", vector_global)
         return vector_global
     
     def ensamble_matriz_global(self):
-        """
-        Ensambla la matriz global de rigidez K para toda la estructura.
-        Devuelve la matriz K global (n_nodos*6 x n_nodos*6)
-        """
         n_nodos = len(self.nodos)
         dof_por_nodo = 6
         size = n_nodos * dof_por_nodo
@@ -103,12 +103,7 @@ class Estructura:
                 for b in range(12):
                     K_global[dofs[a], dofs[b]] += K_b[a, b]
             
-            #print(K_b)
-            #print()
-
         self.K_global = K_global
-        #print("==========XDXDXD=========")
-        #print(K_global)
         return K_global
 
     def resolver_desplazamientos(self, debug=0):
@@ -143,9 +138,13 @@ class Estructura:
             print("Índices fijos:", idx_fijos)
             print("Índices libres:", idx_libres)
 
-        # 3. Formar el sistema reducido: Kll * Dl = Fl
+        # 3. Formar el sistema reducido: Kll @ Dl = Fl
         Kll = K[np.ix_(idx_libres, idx_libres)]
         Fl = F[idx_libres]
+        # Conservar para inspección / export (p. ej. Excel)
+        self.idx_libres = np.asarray(idx_libres, dtype=np.int64).copy()
+        self.Kll = np.asarray(Kll, dtype=np.float64).copy()
+        self.Fl = np.asarray(Fl, dtype=np.float64).copy()
         if debug:
             print("\n--- Sistema reducido ---")
             print("Kll:\n", Kll)
@@ -204,8 +203,8 @@ class Estructura:
             K_barra = barra.Kglobal()
 
             # Vector de reacciones de empotramiento de barra #RE MAL
-
-            f_reacciones_empotramiento_de_barra = barra.reaccion_de_empotramiento_global.copy()
+            #LE PUSE UN SIGNO MENOS PORQUE LO OTRO ERA PARA OBTENER EL NODAL
+            f_reacciones_empotramiento_de_barra = - (barra.reaccion_de_empotramiento_global.copy())
             
 
             #print(f"vector de empotramiento de barra {barra.id}: {f_reacciones_empotramiento_de_barra}")
@@ -214,6 +213,11 @@ class Estructura:
             F_interna_sin_empotramiento = K_barra @ D_barra
             F_interna = F_interna_sin_empotramiento + f_reacciones_empotramiento_de_barra
 
+            # Guardar solicitaciones de extremos en la barra (6 del nodo i + 6 del nodo f)
+            barra.solicitaciones_extremos_global = F_interna.copy()
+            barra.solicitaciones_extremo_i_global = F_interna[:6].copy()
+            barra.solicitaciones_extremo_f_global = F_interna[6:].copy()
+
             if debug:
                 print(f"\nBarra {barra.id}:")
                 print("D_barra:", D_barra)
@@ -221,31 +225,12 @@ class Estructura:
                 print("F_emp_barra:", f_reacciones_empotramiento_de_barra)
                 print("F_interna sin empotramiento:", F_interna_sin_empotramiento)
                 print("F interna final:", F_interna)
-                print("================ XDXDXD ================")
+                print("  --- fin debug barra ---")
 
             lista_solicitaciones.append(F_interna)
         self.reacciones = np.array(lista_solicitaciones)
         return lista_solicitaciones #No es solicitaciones, es reacciones xd
     
-    def calcular_reacciones_locales(self):
-        if not hasattr(self, "reacciones") or self.reacciones is None:
-            self.calcular_reacciones()
-
-        R = self.reacciones
-        R_local = np.zeros((len(self.barras), 12))   # N cantidad de vectores de 3
-        for idx_barra, barra in enumerate(self.barras):
-            
-            coso_rotacion = barra.matriz_A(np.radians(barra.tita or 0.0))
-            coso_rotacion_4x3 = barra.bloque_diagonal_4x3(coso_rotacion)
-            
-            R_local_temp = coso_rotacion_4x3.T @ R[idx_barra]
-
-            submatriz_rotacion_xd = barra.calcular_submatriz_de_rotacion()
-            submatriz_rotacion_xd_4x3 = barra.bloque_diagonal_4x3(submatriz_rotacion_xd)
-
-            R_local[idx_barra, :] = submatriz_rotacion_xd_4x3 @ R_local_temp
-
-        return R_local
 
             
 
