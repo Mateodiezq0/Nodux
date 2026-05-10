@@ -1,0 +1,20 @@
+# Reticular / Hyperstatic_Structures — entorno de ejecución completo.
+# Instalar desde la raíz del repo:  pip install -r requirements.txt
+#
+# Python: 3.10+ recomendado (3.11 probado en desarrollo).
+
+numpy>=1.22,<3
+pandas>=1.5,<3
+openpyxl>=3.0.0
+
+matplotlib>=3.6.0,<4
+
+PyYAML>=6.0
+
+# GUI 3D (ventana Ftool) y pestañas PyVista
+pyvista>=0.42.0
+pyvistaqt>=0.11.0
+PySide6>=6.4.0
+
+# Alternativa a PySide6 (el código prueba PySide6 primero, luego PyQt5):
+# PyQt5>=5.15.0
