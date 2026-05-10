@@ -6,10 +6,65 @@ Excel y PDF para informe / visor embebido en la GUI.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+# Columnas numéricas de ``Solicitacion_extremo_de_barra_Globales`` (extremos i y f, ejes globales).
+SOLICITACION_GLOBAL_COMPONENT_COLS: Tuple[str, ...] = (
+    "Fx_i",
+    "Fy_i",
+    "Fz_i",
+    "Mx_i",
+    "My_i",
+    "Mz_i",
+    "Fx_f",
+    "Fy_f",
+    "Fz_f",
+    "Mx_f",
+    "My_f",
+    "Mz_f",
+)
+
+
+def format_solicitacion_extremos_global_resumen(df: pd.DataFrame, *, eps: float = 1e-9) -> str:
+    """
+    Texto multilínea: para cada componente, máximo y mínimo entre todos los extremos de barra
+    (solo los 12 valores por fila de la hoja global; no hay máximo dentro del tramo).
+    """
+    if df is None or len(df) == 0:
+        return ""
+    lines: List[str] = []
+    lines.append(
+        "Extremos de solicitación (global, por componente en extremos de barras; "
+        "mismas unidades que la tabla «Solicitación extremo de barra Globales»):"
+    )
+    for col in SOLICITACION_GLOBAL_COMPONENT_COLS:
+        if col not in df.columns:
+            continue
+        s = pd.to_numeric(df[col], errors="coerce")
+        if s.isna().all():
+            continue
+        s = s.fillna(0.0)
+        vmax = float(s.max())
+        vmin = float(s.min())
+        if abs(vmax) < eps and abs(vmin) < eps:
+            continue
+        imax = s.idxmax()
+        imin = s.idxmin()
+        try:
+            bid_max = df.loc[imax, "Barra ID"] if "Barra ID" in df.columns else "—"
+            bid_min = df.loc[imin, "Barra ID"] if "Barra ID" in df.columns else "—"
+        except Exception:
+            bid_max, bid_min = "—", "—"
+        lines.append(
+            f"  {col}: máx. {vmax:.6g} (barra {bid_max}) · mín. {vmin:.6g} (barra {bid_min})"
+        )
+    if len(lines) <= 1:
+        return "Extremos de solicitación (global): sin valores distintos de cero en la tabla."
+    return "\n".join(lines)
+
 
 # Orden de hojas en Excel y en el PDF (misma información).
 RESULTADOS_SHEET_ORDER: List[str] = [

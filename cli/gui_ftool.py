@@ -2133,6 +2133,27 @@ class FtoolMainWindow(_QMainWindow):
                     pass
         return out
 
+    def _material_name_per_bar_from_spec(self) -> Dict[int, str]:
+        """Nombre de material por id de barra para overlays de etiquetas en viewport."""
+        out: Dict[int, str] = {}
+        mats = self._spec.get("materials") or {}
+        for br in self._spec.get("bars") or []:
+            if br.get("id") is None:
+                continue
+            try:
+                bid = int(br["id"])
+            except (TypeError, ValueError):
+                continue
+            mk = str(br.get("material") or "default")
+            m = mats.get(mk)
+            if isinstance(m, dict):
+                label = str(m.get("name") or mk).strip()
+            else:
+                label = mk.strip()
+            if label:
+                out[bid] = label
+        return out
+
     def _dlg_material_editor(self, edit_name: Optional[str]) -> None:
         """edit_name None = nuevo material."""
         from cli.loader import _resolve_material_stiffness
@@ -3073,6 +3094,7 @@ class FtoolMainWindow(_QMainWindow):
         per_bar = self._ipn_dims_per_bar_from_spec()
         tube_bar = self._tube_outer_radius_per_bar_from_spec()
         profile_bar = self._profile_polygon_yz_per_bar_from_spec()
+        material_name_bar = self._material_name_per_bar_from_spec()
         vp_style = self._viewport_style_dict()
 
         if key == "geom":
@@ -3088,6 +3110,7 @@ class FtoolMainWindow(_QMainWindow):
                 ipn_dims_per_bar_id=per_bar,
                 tube_outer_radius_per_bar_id=tube_bar,
                 profile_polygon_yz_per_bar_id=profile_bar,
+                material_name_per_bar_id=material_name_bar,
                 viewport_style=vp_style,
             )
             add_nodos_overlay_pyvista(self._plotter, list(nb), self._ipn_dims, 1.0)
