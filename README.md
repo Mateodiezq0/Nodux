@@ -1,45 +1,152 @@
-# Hyperstatic_Structures
+# Nodux
 
-**Nodux** (p. ej. Nodux 1.0) es la aplicación de análisis: estructuras reticuladas 3D (pórticos / vigas espaciales) con modelo en JSON o YAML, resolución, visualización (matplotlib y/o PyVista + Qt) y exportación de resultados. Nombre y versión centralizados en `cli/app_info.py`.
+**Nodux** es una herramienta de análisis de estructuras en 3D.
+Está pensada para ingenieros, estudiantes y cualquier persona que necesite
+calcular cómo se comporta una estructura (como un pórtico o una viga) cuando
+se le aplican cargas o fuerzas.
 
-## Inicio rápido
+---
 
-Desde la raíz del repositorio:
+## ¿Qué hace Nodux?
 
-```powershell
+Cuando construís un edificio, un puente o cualquier estructura, necesitás saber
+si va a aguantar el peso y las fuerzas que va a recibir. Nodux te permite:
+
+- **Definir tu estructura** describiendo sus nodos (puntos de unión), barras
+  (elementos que los conectan), materiales y cargas en un archivo de texto
+  simple (formato JSON o YAML).
+- **Calcular automáticamente** cuánto se deforma cada parte y qué fuerzas
+  internas aparecen en cada barra.
+- **Ver los resultados en 3D** con gráficos interactivos: podés rotar la
+  estructura, ver la deformada y los diagramas de esfuerzos.
+- **Exportar los resultados** a Excel, PDF o CSV para usarlos en informes o
+  seguir trabajando con ellos.
+
+---
+
+## ¿Para quién es?
+
+- Estudiantes de ingeniería civil o arquitectura que quieran verificar
+  ejercicios de estructuras.
+- Profesionales que necesiten una herramienta liviana para análisis rápidos.
+- Cualquier persona curiosa que quiera entender cómo se calculan estructuras.
+
+---
+
+## ¿Cómo funciona por dentro?
+
+No hace falta entender el código para usar Nodux, pero si te interesa saber
+cómo está organizado, el proyecto tiene cuatro partes principales:
+
+```
+Nodux/
+│
+├── core/   → El "cerebro" matemático.
+│            Aquí viven los cálculos: nodos, barras, cargas y la
+│            resolución del sistema de ecuaciones.
+│
+├── cli/    → La "puerta de entrada".
+│            Lee los archivos de modelo (JSON/YAML), coordina el
+│            análisis y muestra la interfaz gráfica de escritorio.
+│            También genera los reportes en Excel, PDF y CSV.
+│
+├── plot/   → Los gráficos.
+│            Genera las visualizaciones 2D (matplotlib) y las vistas
+│            3D interactivas (PyVista).
+│
+└── docs/   → La documentación.
+             Guías de uso, descripción de la arquitectura y formato
+             de los archivos de modelo.
+```
+
+### El flujo de trabajo, paso a paso
+
+```
+Tu archivo JSON/YAML
+        ↓
+Nodux lo lee y construye el modelo
+        ↓
+Calcula desplazamientos y esfuerzos
+        ↓
+Muestra los resultados en pantalla (3D)
+        ↓
+Exporta a Excel / PDF / CSV
+```
+
+---
+
+## ¿Qué necesito para usarlo?
+
+Solo necesitás tener **Python** instalado en tu computadora. El resto de las
+dependencias se instalan con un solo comando.
+
+### Instalación
+
+```bash
+# 1. Crear un entorno virtual (recomendado)
 python -m venv .venv
+
+# 2. Activarlo
+# En Windows:
 .\.venv\Scripts\Activate.ps1
-pip install -U pip
+# En Mac/Linux:
+source .venv/bin/activate
+
+# 3. Instalar las dependencias
 pip install -r requirements.txt
 ```
+
+### Abrir la interfaz gráfica
 
 ```bash
 python -m cli gui
 ```
 
-Otros comandos: `python -m cli run ruta\modelo.json`, `python -m cli interactive`, `python -m cli gui --ejemplo`.
-
-Ejecutá siempre `python -m cli ...` **desde la raíz del repo** (el paquete ajusta `sys.path` solo en ese caso).
-
-## Documentación para humanos e IA
-
-En **[docs/ai/](docs/ai/)** hay guías cortas (setup, visión general, arquitectura, formato del modelo, GUI):
-
-| Documento | Contenido |
-|-----------|-----------|
-| [docs/ai/00_SETUP_AND_ENV.md](docs/ai/00_SETUP_AND_ENV.md) | Entorno virtual, `pip install`, comandos CLI, Qt y YAML. |
-| [docs/ai/01_PROJECT_OVERVIEW.md](docs/ai/01_PROJECT_OVERVIEW.md) | Qué hace el proyecto y layout de carpetas. |
-| [docs/ai/02_ARCHITECTURE.md](docs/ai/02_ARCHITECTURE.md) | Flujo spec → loader → solver → export / GUI. |
-| [docs/ai/03_MODEL_SPEC.md](docs/ai/03_MODEL_SPEC.md) | Claves del JSON/YAML y ejemplo en `cli/examples/`. |
-| [docs/ai/04_GUI_AND_VIZ.md](docs/ai/04_GUI_AND_VIZ.md) | Vistas 3D, atajos, PyVista vs matplotlib. |
-
-Para agentes automatizados en Cursor, ver también **[AGENTS.md](AGENTS.md)**.
-
-## Desarrollo y tests
+### Probar con un ejemplo incluido
 
 ```bash
-pip install -r requirements-dev.txt
-pytest test_rigidez.py
+python -m cli gui --ejemplo
 ```
 
-Otros scripts en la raíz pueden no seguir convención `test_*` de pytest; ejecutalos con `python nombre.py` si corresponde.
+Este comando carga una estructura de ejemplo para que puedas ver Nodux en
+acción sin necesidad de crear ningún archivo.
+
+### Analizar tu propio modelo
+
+```bash
+python -m cli run ruta/a/tu/modelo.json
+```
+
+> **Importante:** siempre ejecutá los comandos desde la carpeta raíz del
+> proyecto (donde está el archivo `README.md`).
+
+---
+
+## Formato del modelo
+
+Los modelos se describen en archivos JSON o YAML. En la carpeta
+`cli/examples/` encontrás un ejemplo completo (`supertesteo_like.json`) que
+podés usar como punto de partida.
+
+Un modelo define:
+
+- **Nodos:** los puntos de la estructura (con sus coordenadas x, y, z).
+- **Barras:** las conexiones entre nodos (con su material y sección).
+- **Cargas:** fuerzas puntuales, distribuidas o en los nodos.
+- **Apoyos:** qué nodos están fijos y en qué direcciones.
+
+---
+
+## Limitaciones actuales
+
+Nodux está enfocado en estructuras reticuladas 3D lineales (pórticos y vigas
+espaciales). No es un software de diseño normativo completo ni un procesador
+CAD genérico: su objetivo es ir del modelo al cálculo y a la visualización de
+forma directa y eficiente.
+
+---
+
+## Más información
+
+La carpeta `docs/` contiene guías más detalladas sobre cada parte del sistema,
+incluyendo el formato completo del modelo y cómo funciona la interfaz gráfica.
